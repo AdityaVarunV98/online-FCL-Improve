@@ -15,7 +15,9 @@ if torch.cuda.is_available():
     args.device = f'cuda:{gpu_idx}'
 else:
     args.device = 'cpu' 
+
 print(args)
+print(args.device)
 
 for run in range(args.n_runs):
     loader_clients, cls_assignment_list, global_test_loader = get_loader_all_clients(args, run)

@@ -9,12 +9,53 @@ from torchvision.models import resnet18, resnet50
 from utils.data_loader import get_statistics
 from utils.cl_utils import Client
 from utils.utils_memory import Memory
+import pynvml
+
 
 def get_free_gpu_idx():
-    """Get the index of the GPU with current lowest memory usage."""
-    os.system("nvidia-smi -q -d Memory |grep -A4 GPU|grep Used  > ./output/tmp")
-    memory_available = [int(x.split()[2]) for x in open("./output/tmp", "r").readlines()]
-    return np.argmin(memory_available)
+    """
+    Finds the index of the GPU with the lowest memory usage.
+    This function uses the pynvml library, which works on both Windows and Linux,
+    and is more robust than parsing command-line output.
+    """
+    try:
+        pynvml.nvmlInit()
+        device_count = pynvml.nvmlDeviceGetCount()
+        gpu_memory_used = []
+
+        if device_count == 0:
+            print("No NVIDIA GPUs found.")
+            return None
+
+        for i in range(device_count):
+            handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+            info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            # pynvml returns memory in bytes. We'll use this directly for comparison.
+            gpu_memory_used.append(info.used)
+
+        pynvml.nvmlShutdown()
+
+        # Find the index of the GPU with the minimum used memory
+        if not gpu_memory_used:
+            print("Error: Could not retrieve GPU memory information.")
+            return None
+
+        # np.argmin returns the index of the minimum value
+        return np.argmin(gpu_memory_used)
+
+    except pynvml.NVMLError as error:
+        print(f"Error initializing NVML: {error}")
+        print("Please ensure you have the NVIDIA driver installed and that pynvml can access it.")
+        return None
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        return None
+
+# def get_free_gpu_idx():
+#     """Get the index of the GPU with current lowest memory usage."""
+#     os.system("nvidia-smi -q -d Memory |grep -A4 GPU|grep Used  > ./output/tmp")
+#     memory_available = [int(x.split()[2]) for x in open("./output/tmp", "r").readlines()]
+#     return np.argmin(memory_available)
 
 
 def get_logger(args):

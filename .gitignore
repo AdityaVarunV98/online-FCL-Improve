@@ -1,0 +1,16 @@
+# Python cache files
+__pycache__/
+*.pyc
+
+# Datasets folder
+data/
+
+# Generated output and results
+output/
+
+# Log files
+experiments_log.txt
+*.log
+
+# Python virtual environment (assuming 'ofcl' is your venv folder)
+ofcl/
