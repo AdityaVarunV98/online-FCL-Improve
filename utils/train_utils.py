@@ -89,6 +89,7 @@ def custom_resnet(args, model):
 
 
 def initialize_model(args):
+    print("Model name: ",args.model_name)
     if args.model_name == 'resnet18':
         model = resnet18().to(args.device)
     if args.model_name == 'resnet18_pre':
@@ -109,8 +110,15 @@ def initialize_model(args):
     if args.optimizer == 'adam':
         optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
 
-    criterion = torch.nn.CrossEntropyLoss()
-    return model, optimizer, criterion
+    # CHH: Considering the SupConLoss Criterion
+    from utils.supcon_loss import SupConLoss
+    
+    criterion_ce = torch.nn.CrossEntropyLoss()
+    criterion_supcon = SupConLoss(temperature=0.3, contrast_mode="proxy")
+
+    criteria = {'ce': criterion_ce, 'supcon': criterion_supcon}
+
+    return model, optimizer, criteria
 
 
 def initialize_clients(args, loader_clients, cls_assignment_list, run):

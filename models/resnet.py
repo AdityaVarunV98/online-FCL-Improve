@@ -92,16 +92,21 @@ class ResNet(nn.Module):
             self.in_planes = planes * block.expansion
         return nn.Sequential(*layers)
 
-    def forward(self, x):
+    def forward(self, x, return_features=False):
         out = relu(self.bn1(self.conv1(x)))
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
         out = self.layer4(out)
         out = avg_pool2d(out, 4)
-        out = out.view(out.size(0), -1)
-        out = self.linear(out)
-        return out
+        
+        features = out.view(out.size(0), -1)
+        logits = self.linear(features)
+
+        if return_features:
+            return features, logits
+
+        return logits
 
 
 def SlimResNet18(nclasses, input_size=(3, 32, 32), nf=20):

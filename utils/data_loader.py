@@ -786,6 +786,8 @@ def get_loader_all_clients(args, run):
     cls_assignment_fn = f'{dir_output}{args.dataset_name}_cls_assignment.pkl'
     global_test_fn = f'{dir_output}{args.dataset_name}_global_test.pkl'
 
+    print(loader_fn)
+
     if not os.path.exists(loader_fn):
         os.makedirs(dir_output)
         all_clients_ds, cls_assignment_list = assign_data_per_client(args, run)
@@ -800,6 +802,7 @@ def get_loader_all_clients(args, run):
                 task_ds_tmp = []
                 for task_data in split_ds:
                     task_ds = torch.utils.data.TensorDataset(task_data[0], task_data[1])
+                    # print(args.batch_size)
                     task_loader = torch.utils.data.DataLoader(task_ds, batch_size=args.batch_size)
                     loader_tmp.append(task_loader)
                     # we save the TensorDataset to use ConcatDataset and create the global test loader for each task

@@ -20,7 +20,11 @@ print(args)
 print(args.device)
 
 for run in range(args.n_runs):
+    # Function that considers the directories, assigns data for the tasks and the clients
+    # May not require any changes here
     loader_clients, cls_assignment_list, global_test_loader = get_loader_all_clients(args, run)
+    
+    # Defining the clients using the client task (make changes in the client)
     clients = initialize_clients(args, loader_clients, cls_assignment_list, run)
 
     start_time = datetime.now()
@@ -31,16 +35,25 @@ for run in range(args.n_runs):
                 if samples is not None:
                     if args.with_memory:
                         if client.task_id == 0:
+                            # Require changes here to train with the new loss (change the training_step function)
                             client.train_with_update(samples, labels)
                         else:
+                            # Require changes here to train with the new loss (change the training_step function)
                             client.train_with_memory(samples, labels)
                     else:
                         client.train(samples, labels)
                 else:
+                    # print(f'Run {run} - Client {client.client_id} - Task {client.task_id} completed - {client.get_current_task()}')
+                    class_counts = client.get_task_class_counts(client.task_id)
                     print(f'Run {run} - Client {client.client_id} - Task {client.task_id} completed - {client.get_current_task()}')
-                    # compute loss train
+                    print(f'Class counts: {class_counts}')
+
+                    
+                    # compute loss train (just adds and shows the loss, no changes here)
                     logger = client.compute_loss(logger, run)
                     print(f'Run {run} - Client {client.client_id} - Test time - Task {client.task_id}')
+                    
+                    # Make sure the inference is done as per the paper here
                     logger = client.test(logger, run)
                     logger = client.validation(logger, run)
                     logger = client.forgetting(logger, run)

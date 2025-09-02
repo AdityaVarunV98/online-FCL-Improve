@@ -101,10 +101,12 @@ class Memory:
 
 
     def class_balanced_update(self, samples, labels, task_id, model, current_classes):
+        # print(samples.shape)
+        
         self.seen_classes.update(labels.unique().cpu().numpy())
         task_ids = torch.Tensor([task_id] * len(labels))
         mem_per_class = self.args.memory_size // len(self.seen_classes)
-        
+
         if self.seen + self.args.batch_size <= self.args.memory_size:   # fill the memory if spots are left
             for sample, label in zip(samples, labels):
                 self.x[self.seen] = sample

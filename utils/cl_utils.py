@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import balanced_accuracy_score, confusion_matrix, ConfusionMatrixDisplay
 from torchvision import transforms
 from copy import deepcopy
+import torch.nn.functional as F
 
 plt.rcParams.update({
     "font.family": "serif",})
@@ -16,8 +17,10 @@ class Client:
         self.loaders = loaders
         self.model = model
         self.optimizer = optimizer
-        self.criterion = criterion
+        self.criterion_ce = criterion['ce']
+        self.criterion_supcon = criterion['supcon']
         self.client_id = client_id
+        self.agent_name = "PCR"
 
         self.train_loader = loaders[0]
         self.val_loader = loaders[1]
@@ -45,6 +48,15 @@ class Client:
         rotation = transforms.RandomRotation(degrees=20) 
         augment = torch.nn.Sequential(flip, rotation)
         self.augment = augment
+
+    # CHH: To get the number for each class
+    def get_task_class_counts(self, task_id):
+        from collections import Counter
+        loader = self.train_loader[task_id]
+        all_labels = []
+        for _, labels in loader:
+            all_labels.extend(labels.tolist())
+        return dict(Counter(all_labels))
 
 
     def get_next_batch(self):
@@ -99,6 +111,48 @@ class Client:
         noise = torch.Tensor(np.random.normal(mean, std, size=embedding_matrix.shape)).to(self.args.device)
         noisy_embedding_matrix = embedding_matrix + noise
         return noisy_embedding_matrix
+    
+    # PCR
+    def _perform_pcr_step(self, samples, labels):
+        """
+        Performs a single training step using the logic from the PCR agent.
+        """
+        from utils.setup_elements import transforms_match, transforms_aug
+        
+        # Augment based on dataset
+        samples_aug = torch.stack([transforms_aug[self.args.dataset_name](img.cpu()) for img in samples])
+        
+        if torch.cuda.is_available():
+            samples_aug = samples_aug.cuda()
+
+        # Concat with the original
+        final_x = torch.cat([samples, samples_aug])
+        final_y = torch.cat([labels, labels])
+
+        # Get features and logits 
+        features, logits = self.model(final_x, return_features=True)
+
+        # Not considering the ce loss for now (may have to implement a different forward function)
+        loss = 0 * self.criterion_ce(logits, final_y)
+
+        # Proxies from the linear layer
+        proxies = self.model.linear.weight[final_y]
+        
+        # Normalize for cosine sim
+        features_norm = F.normalize(features, p=2, dim=1)
+        proxies_norm = F.normalize(proxies, p=2, dim=1)
+
+        # Reshape to input accurately
+        supcon_features = torch.cat([features_norm.unsqueeze(1), proxies_norm.unsqueeze(1)], dim=1)
+        
+        # Pass
+        loss += self.criterion_supcon(features=supcon_features, labels=final_y)
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        
+        return loss.item()
 
     def train(self, samples, labels):
         self.model.train()
@@ -115,150 +169,386 @@ class Client:
         self.train_task_loss += batch_loss
 
 
+    # def train_with_update(self, samples, labels):
+    #     self.model.train()
+    #     samples, labels = samples.to(self.args.device), labels.to(self.args.device)
+    #     current_classes = self.get_current_task()
+    #     batch_loss = self.training_step(samples, labels)
+    #     if self.args.dataset_name in ['newsgroup', 'reuters', 'yahoo', 'dbpedia']:
+    #         # multiple gradient updates for the same mini-batch if local_epochs > 1
+    #         for local_epoch in range(self.args.local_epochs - 1):
+    #             batch_loss = self.training_step(samples, labels)
+    #     else:
+    #         # multiple gradient updates for the same mini-batch if local_epochs > 1
+    #         for local_epoch in range(self.args.local_epochs - 1):
+    #             batch_loss = self.training_step(self.augment(samples), labels)
+    #     self.train_task_loss += batch_loss
+
+    #     if self.args.update_strategy == 'reservoir':
+    #         self.memory.reservoir_update(samples, labels, self.task_id)
+    #     if self.args.update_strategy == 'balanced':
+    #         self.memory.class_balanced_update(samples, labels, self.task_id, self.last_local_model, current_classes)
+    #     if self.args.update_strategy == 'uncertainty':
+    #         self.memory.uncertainty_update(samples, labels, self.task_id, self.model)
+
+
+    # def train_with_memory(self, samples, labels):
+    #     self.model.train()
+    #     samples, labels = samples.to(self.args.device), labels.to(self.args.device)
+    #     current_classes = self.get_current_task()
+
+    #     if self.args.sampling_strategy == 'uncertainty':
+    #         mem_x, mem_y, _ = self.memory.uncertainty_sampling(self.last_local_model, exclude_task=self.task_id,
+    #                                                             subsample_size=self.args.subsample_size)
+    #     if self.args.sampling_strategy == 'random':
+    #         mem_x, mem_y, _ = self.memory.random_sampling(self.args.batch_size, exclude_task=self.task_id)
+    #     if self.args.sampling_strategy == 'balanced_random':
+    #         mem_x, mem_y, _ = self.memory.balanced_random_sampling(self.args.batch_size, exclude_task=self.task_id)
+
+    #     mem_x, mem_y = mem_x.to(self.args.device), mem_y.to(self.args.device)
+    #     input_x = torch.cat([samples, mem_x]) # .to(self.args.device)
+    #     input_y = torch.cat([labels, mem_y])  # .to(self.args.device)
+    #     batch_loss = self.training_step(input_x, input_y)
+
+    #     # multiple gradient updates for the same mini-batch if local_epochs > 1
+    #     for local_epoch in range(self.args.local_epochs - 1):
+    #         if self.args.sampling_strategy == 'uncertainty':
+    #             mem_x, mem_y, _ = self.memory.uncertainty_sampling(self.last_local_model, exclude_task=self.task_id,
+    #                                                                subsample_size=self.args.subsample_size)
+    #         if self.args.sampling_strategy == 'random':
+    #             mem_x, mem_y, _ = self.memory.random_sampling(self.args.batch_size, exclude_task=self.task_id)
+    #         if self.args.sampling_strategy == 'balanced_random':
+    #             mem_x, mem_y, _ = self.memory.balanced_random_sampling(self.args.batch_size, exclude_task=self.task_id)
+
+    #         mem_x, mem_y = mem_x.to(self.args.device), mem_y.to(self.args.device)
+    #         if self.args.dataset_name in ['newsgroup', 'reuters', 'yahoo', 'dbpedia']:
+    #             input_x = torch.cat([samples, mem_x]) # .to(self.args.device)
+    #         else:
+    #             input_x = torch.cat([self.augment(samples), mem_x]) # .to(self.args.device)
+
+    #         input_y = torch.cat([labels, mem_y])  # .to(self.args.device)
+    #         batch_loss = self.training_step(input_x, input_y)
+        
+    #     self.train_task_loss += batch_loss
+    #     if self.args.update_strategy == 'reservoir':
+    #         self.memory.reservoir_update(samples, labels, self.task_id)
+    #     if self.args.update_strategy == 'balanced':
+    #         self.memory.class_balanced_update(samples, labels, self.task_id, self.last_local_model, current_classes)
+    
+    # # CHH: using PCR
+    # def train_with_update(self, samples, labels):
+    #     self.model.train()
+    #     samples, labels = samples.to(self.args.device), labels.to(self.args.device)
+
+    #     batch_loss = self._perform_pcr_step(samples, labels)
+    #     self.train_task_loss += batch_loss
+
+    #     if self.args.update_strategy == 'reservoir':
+    #         self.memory.reservoir_update(samples, labels, self.task_id)
+    #     elif self.args.update_strategy == 'balanced':
+    #         self.memory.class_balanced_update(samples, labels, self.task_id, self.model, self.get_current_task())
+
+    # # CHH: using PCR
+    # def train_with_memory(self, samples, labels):
+    #     self.model.train()
+    #     samples, labels = samples.to(self.args.device), labels.to(self.args.device)
+
+    #     mem_x, mem_y, _ = self.memory.random_sampling(self.args.batch_size, exclude_task=self.task_id)
+
+    #     if mem_x.size(0) > 0:
+    #         mem_x, mem_y = mem_x.to(self.args.device), mem_y.to(self.args.device)
+    #         combined_x = torch.cat([samples, mem_x])
+    #         combined_y = torch.cat([labels, mem_y])
+    #     else:
+    #         combined_x, combined_y = samples, labels
+        
+    #     batch_loss = self._perform_pcr_step(combined_x, combined_y)
+    #     self.train_task_loss += batch_loss
+
+    #     if self.args.update_strategy == 'reservoir':
+    #         self.memory.reservoir_update(samples, labels, self.task_id)
+    #     elif self.args.update_strategy == 'balanced':
+    #         self.memory.class_balanced_update(samples, labels, self.task_id, self.model, self.get_current_task())
+
+    # CHH: using PCR
     def train_with_update(self, samples, labels):
         self.model.train()
         samples, labels = samples.to(self.args.device), labels.to(self.args.device)
-        current_classes = self.get_current_task()
-        batch_loss = self.training_step(samples, labels)
-        if self.args.dataset_name in ['newsgroup', 'reuters', 'yahoo', 'dbpedia']:
-            # multiple gradient updates for the same mini-batch if local_epochs > 1
-            for local_epoch in range(self.args.local_epochs - 1):
-                batch_loss = self.training_step(samples, labels)
-        else:
-            # multiple gradient updates for the same mini-batch if local_epochs > 1
-            for local_epoch in range(self.args.local_epochs - 1):
-                batch_loss = self.training_step(self.augment(samples), labels)
+
+        # multiple gradient updates for the same mini-batch if local_epochs > 1
+        for local_epoch in range(self.args.local_epochs):
+            batch_loss = self._perform_pcr_step(samples, labels)
+            print(f"local epoch {local_epoch}, loss: {batch_loss}")
+
         self.train_task_loss += batch_loss
 
         if self.args.update_strategy == 'reservoir':
             self.memory.reservoir_update(samples, labels, self.task_id)
-        if self.args.update_strategy == 'balanced':
-            self.memory.class_balanced_update(samples, labels, self.task_id, self.last_local_model, current_classes)
-        if self.args.update_strategy == 'uncertainty':
-            self.memory.uncertainty_update(samples, labels, self.task_id, self.model)
+        elif self.args.update_strategy == 'balanced':
+            self.memory.class_balanced_update(samples, labels, self.task_id, self.model, self.get_current_task())
 
 
+    # CHH: using PCR
     def train_with_memory(self, samples, labels):
         self.model.train()
         samples, labels = samples.to(self.args.device), labels.to(self.args.device)
-        current_classes = self.get_current_task()
 
-        if self.args.sampling_strategy == 'uncertainty':
-            mem_x, mem_y, _ = self.memory.uncertainty_sampling(self.last_local_model, exclude_task=self.task_id,
-                                                                subsample_size=self.args.subsample_size)
-        if self.args.sampling_strategy == 'random':
+        batch_loss = None
+        for local_epoch in range(self.args.local_epochs):
             mem_x, mem_y, _ = self.memory.random_sampling(self.args.batch_size, exclude_task=self.task_id)
-        if self.args.sampling_strategy == 'balanced_random':
-            mem_x, mem_y, _ = self.memory.balanced_random_sampling(self.args.batch_size, exclude_task=self.task_id)
 
-        mem_x, mem_y = mem_x.to(self.args.device), mem_y.to(self.args.device)
-        input_x = torch.cat([samples, mem_x]) # .to(self.args.device)
-        input_y = torch.cat([labels, mem_y])  # .to(self.args.device)
-        batch_loss = self.training_step(input_x, input_y)
-
-        # multiple gradient updates for the same mini-batch if local_epochs > 1
-        for local_epoch in range(self.args.local_epochs - 1):
-            if self.args.sampling_strategy == 'uncertainty':
-                mem_x, mem_y, _ = self.memory.uncertainty_sampling(self.last_local_model, exclude_task=self.task_id,
-                                                                   subsample_size=self.args.subsample_size)
-            if self.args.sampling_strategy == 'random':
-                mem_x, mem_y, _ = self.memory.random_sampling(self.args.batch_size, exclude_task=self.task_id)
-            if self.args.sampling_strategy == 'balanced_random':
-                mem_x, mem_y, _ = self.memory.balanced_random_sampling(self.args.batch_size, exclude_task=self.task_id)
-
-            mem_x, mem_y = mem_x.to(self.args.device), mem_y.to(self.args.device)
-            if self.args.dataset_name in ['newsgroup', 'reuters', 'yahoo', 'dbpedia']:
-                input_x = torch.cat([samples, mem_x]) # .to(self.args.device)
+            if mem_x.size(0) > 0:
+                mem_x, mem_y = mem_x.to(self.args.device), mem_y.to(self.args.device)
+                combined_x = torch.cat([samples, mem_x])
+                combined_y = torch.cat([labels, mem_y])
             else:
-                input_x = torch.cat([self.augment(samples), mem_x]) # .to(self.args.device)
+                combined_x, combined_y = samples, labels
 
-            input_y = torch.cat([labels, mem_y])  # .to(self.args.device)
-            batch_loss = self.training_step(input_x, input_y)
-        
+            batch_loss = self._perform_pcr_step(combined_x, combined_y)
+            print(f"local epoch {local_epoch}, loss: {batch_loss}")
+
         self.train_task_loss += batch_loss
+
         if self.args.update_strategy == 'reservoir':
             self.memory.reservoir_update(samples, labels, self.task_id)
-        if self.args.update_strategy == 'balanced':
-            self.memory.class_balanced_update(samples, labels, self.task_id, self.last_local_model, current_classes)
+        elif self.args.update_strategy == 'balanced':
+            self.memory.class_balanced_update(samples, labels, self.task_id, self.model, self.get_current_task())
 
+
+    @property
+    def seen_classes(self):
+        """Returns a list of all class labels seen so far."""
+        if self.task_id == -1: 
+            return []
+        
+        # Calculate the number of classes seen based on the current task ID
+        num_seen_classes = (self.task_id + 1) * self.args.n_classes_per_task
+        return self.cls_assignment[:num_seen_classes]
+
+    # @torch.no_grad()
+    # def test(self, logger, run):
+    #     self.model.eval()
+    #     for task_id_eval, eval_loader in enumerate(self.test_loader):
+    #         total_correct, total = 0.0, 0.0
+    #         y_pred = []
+    #         y_true = []
+    #         if task_id_eval > self.task_id:
+    #             break
+    #         for samples, labels in eval_loader:
+    #             samples, labels = samples.to(self.args.device), labels.to(self.args.device)
+    #             logits = self.model(samples)
+    #             preds = logits.argmax(dim=1)
+    #             total_correct += (preds == labels).sum()
+    #             total += len(labels)
+    #             y_true.append(labels)
+    #             y_pred.append(preds)
+
+    #         y_true = torch.cat(y_true).cpu()
+    #         y_pred = torch.cat(y_pred).cpu()
+    #         accuracy = total_correct/total
+
+    #         cm = confusion_matrix(y_true, y_pred, labels=self.cls_assignment)
+    #         cm_display = ConfusionMatrixDisplay(cm, display_labels=self.cls_assignment).plot()
+    #         plt.tight_layout()
+    #         plt.title(f'Accuracy: {accuracy:.3f}')
+    #         plt.savefig(f'{self.args.dir_results}client{self.client_id}_run{run}_cm_{self.task_id}_{task_id_eval}.pdf', format='pdf')
+    #         plt.close()
+    #         logger['test']['acc'][self.client_id][run][self.task_id][task_id_eval] = accuracy
+    #     return logger
+    
 
     @torch.no_grad()
     def test(self, logger, run):
         self.model.eval()
         for task_id_eval, eval_loader in enumerate(self.test_loader):
-            total_correct, total = 0.0, 0.0
-            y_pred = []
-            y_true = []
             if task_id_eval > self.task_id:
                 break
+
+            y_pred_list, y_true_list = [], []
             for samples, labels in eval_loader:
                 samples, labels = samples.to(self.args.device), labels.to(self.args.device)
-                logits = self.model(samples)
-                preds = logits.argmax(dim=1)
-                total_correct += (preds == labels).sum()
-                total += len(labels)
-                y_true.append(labels)
-                y_pred.append(preds)
+                y_true_list.append(labels)
 
-            y_true = torch.cat(y_true).cpu()
-            y_pred = torch.cat(y_pred).cpu()
-            accuracy = total_correct/total
+                
+                if self.agent_name == 'PCR':
+                    # Using PCR inference
+                    seen_classes = self.cls_assignment[:(task_id_eval + 1) * self.args.n_classes_per_task]
+                    all_seen_proxies = F.normalize(self.model.linear.weight[seen_classes], p=2, dim=1)
+                    
+                    features, _ = self.model(samples, return_features=True)
+                    features = F.normalize(features, p=2, dim=1)
+                    
+                    logits = torch.matmul(features, all_seen_proxies.T)
+                    preds_relative = logits.argmax(dim=1)
+                    preds = torch.tensor([seen_classes[i] for i in preds_relative], device=samples.device)
+                
+                else:
+                    logits = self.model(samples)
+                    preds = logits.argmax(dim=1)
+                
+                y_pred_list.append(preds)
 
+            y_true = torch.cat(y_true_list).cpu()
+            y_pred = torch.cat(y_pred_list).cpu()
+            
+            accuracy = (y_true == y_pred).sum().float() / len(y_true)
+            logger['test']['acc'][self.client_id][run][self.task_id][task_id_eval] = accuracy.item()
+            
             cm = confusion_matrix(y_true, y_pred, labels=self.cls_assignment)
             cm_display = ConfusionMatrixDisplay(cm, display_labels=self.cls_assignment).plot()
             plt.tight_layout()
             plt.title(f'Accuracy: {accuracy:.3f}')
             plt.savefig(f'{self.args.dir_results}client{self.client_id}_run{run}_cm_{self.task_id}_{task_id_eval}.pdf', format='pdf')
             plt.close()
-            logger['test']['acc'][self.client_id][run][self.task_id][task_id_eval] = accuracy
+        
         return logger
     
 
+    # @torch.no_grad()
+    # def validation(self, logger, run):
+    #     self.model.eval()
+    #     for task_id_eval, eval_loader in enumerate(self.val_loader):
+    #         total_correct, total = 0.0, 0.0
+    #         if task_id_eval > self.task_id:
+    #             break
+    #         for samples, labels in eval_loader:
+    #             samples, labels = samples.to(self.args.device), labels.to(self.args.device)
+    #             logits = self.model(samples)
+    #             preds = logits.argmax(dim=1)
+    #             total_correct += (preds == labels).sum()
+    #             total += len(labels)
+    #         accuracy = total_correct/total
+    #         logger['val']['acc'][self.client_id][run][self.task_id][task_id_eval] = accuracy
+    #     return logger
+    
+
+    # @torch.no_grad()
+    # def balanced_accuracy(self, logger, run):
+    #     self.model.eval()
+    #     y_pred = []
+    #     y_true = []
+    #     for task_id_eval, eval_loader in enumerate(self.test_loader):
+    #         if task_id_eval > self.task_id:
+    #             break
+    #         for samples, labels in eval_loader:
+    #             samples, labels = samples.to(self.args.device), labels.to(self.args.device)
+    #             logits = self.model(samples)
+    #             preds = logits.argmax(dim=1)
+    #             y_true.append(labels)
+    #             y_pred.append(preds)
+    #     y_true = torch.cat(y_true).cpu()
+    #     y_pred = torch.cat(y_pred).cpu()
+    #     balanced_accuracy = balanced_accuracy_score(y_true, y_pred)    
+    #     logger['test']['bal_acc'][self.client_id][run] = balanced_accuracy
+
+    #     cm = confusion_matrix(y_true, y_pred, labels=self.cls_assignment)
+    #     cm_display = ConfusionMatrixDisplay(cm, display_labels=self.cls_assignment).plot()
+    #     plt.tight_layout()
+    #     plt.title(f'Accuracy: {balanced_accuracy:.3f}')
+    #     plt.savefig(f'{self.args.dir_results}client{self.client_id}_run{run}_cm_final.pdf', format='pdf')
+    #     plt.close()
+
+    #     return logger
+
+    
     @torch.no_grad()
     def validation(self, logger, run):
+        """
+        Performs validation on all tasks seen so far.
+        This method now includes conditional logic to use the correct
+        inference strategy based on the agent name (e.g., PCR vs. standard).
+        """
         self.model.eval()
         for task_id_eval, eval_loader in enumerate(self.val_loader):
-            total_correct, total = 0.0, 0.0
             if task_id_eval > self.task_id:
                 break
+
+            y_pred_list, y_true_list = [], []
+            total_correct, total = 0.0, 0.0
+
             for samples, labels in eval_loader:
                 samples, labels = samples.to(self.args.device), labels.to(self.args.device)
-                logits = self.model(samples)
-                preds = logits.argmax(dim=1)
-                total_correct += (preds == labels).sum()
-                total += len(labels)
-            accuracy = total_correct/total
-            logger['val']['acc'][self.client_id][run][self.task_id][task_id_eval] = accuracy
+                y_true_list.append(labels)
+                
+                if self.agent_name == 'PCR':
+                    # Using PCR inference
+                    seen_classes = self.cls_assignment[:(task_id_eval + 1) * self.args.n_classes_per_task]
+                    all_seen_proxies = F.normalize(self.model.linear.weight[seen_classes], p=2, dim=1)
+                    
+                    features, _ = self.model(samples, return_features=True)
+                    features = F.normalize(features, p=2, dim=1)
+                    
+                    logits = torch.matmul(features, all_seen_proxies.T)
+                    preds_relative = logits.argmax(dim=1)
+                    
+                    preds = torch.tensor([seen_classes[i] for i in preds_relative], device=samples.device)
+                
+                else:
+                    logits = self.model(samples)
+                    preds = logits.argmax(dim=1)
+                
+                y_pred_list.append(preds)
+
+            y_true = torch.cat(y_true_list)
+            y_pred = torch.cat(y_pred_list)
+            
+            accuracy = (y_true == y_pred).sum().float() / len(y_true)
+            logger['val']['acc'][self.client_id][run][self.task_id][task_id_eval] = accuracy.item()
+            
         return logger
-    
 
     @torch.no_grad()
     def balanced_accuracy(self, logger, run):
+        """
+        Calculates the final balanced accuracy across all tasks at the end of training.
+        This method is now updated with conditional inference logic.
+        """
         self.model.eval()
-        y_pred = []
-        y_true = []
+        y_pred_list = []
+        y_true_list = []
+
+        # Loop over all test loaders for all tasks the client has been trained on
         for task_id_eval, eval_loader in enumerate(self.test_loader):
             if task_id_eval > self.task_id:
                 break
+            
             for samples, labels in eval_loader:
                 samples, labels = samples.to(self.args.device), labels.to(self.args.device)
-                logits = self.model(samples)
-                preds = logits.argmax(dim=1)
-                y_true.append(labels)
-                y_pred.append(preds)
-        y_true = torch.cat(y_true).cpu()
-        y_pred = torch.cat(y_pred).cpu()
-        balanced_accuracy = balanced_accuracy_score(y_true, y_pred)    
-        logger['test']['bal_acc'][self.client_id][run] = balanced_accuracy
+                y_true_list.append(labels)
+
+                if self.agent_name == 'PCR':
+                    # Using PCR inference
+                    seen_classes = self.cls_assignment[:(task_id_eval + 1) * self.args.n_classes_per_task]
+                    all_seen_proxies = F.normalize(self.model.linear.weight[seen_classes], p=2, dim=1)
+                    
+                    features, _ = self.model(samples, return_features=True)
+                    features = F.normalize(features, p=2, dim=1)
+                    
+                    logits = torch.matmul(features, all_seen_proxies.T)
+                    preds_relative = logits.argmax(dim=1)
+                    preds = torch.tensor([seen_classes[i] for i in preds_relative], device=samples.device)
+
+                else:
+                    logits = self.model(samples)
+                    preds = logits.argmax(dim=1)
+                
+                y_pred_list.append(preds)
+
+        y_true = torch.cat(y_true_list).cpu().numpy()
+        y_pred = torch.cat(y_pred_list).cpu().numpy()
+        
+        final_balanced_accuracy = balanced_accuracy_score(y_true, y_pred)
+        logger['test']['bal_acc'][self.client_id][run] = final_balanced_accuracy
 
         cm = confusion_matrix(y_true, y_pred, labels=self.cls_assignment)
         cm_display = ConfusionMatrixDisplay(cm, display_labels=self.cls_assignment).plot()
         plt.tight_layout()
-        plt.title(f'Accuracy: {balanced_accuracy:.3f}')
+        plt.title(f'Final Balanced Accuracy: {final_balanced_accuracy:.3f}')
         plt.savefig(f'{self.args.dir_results}client{self.client_id}_run{run}_cm_final.pdf', format='pdf')
         plt.close()
 
         return logger
+
     
 
     def forgetting(self, logger, run):
