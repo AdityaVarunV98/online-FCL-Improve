@@ -89,7 +89,7 @@ def custom_resnet(args, model):
 
 
 def initialize_model(args):
-    print("Model name: ",args.model_name)
+    # print("Model name: ",args.model_name)
     if args.model_name == 'resnet18':
         model = resnet18().to(args.device)
     if args.model_name == 'resnet18_pre':

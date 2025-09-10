@@ -154,18 +154,21 @@ class Client:
         
         return loss.item()
 
-    def train(self, samples, labels):
+    def train(self, samples, labels, print_loss=False):
         self.model.train()
         samples, labels = samples.to(self.args.device), labels.to(self.args.device)
-        batch_loss = self.training_step(samples, labels)
+        batch_loss = self._perform_pcr_step(samples, labels)
         if self.args.dataset_name in ['newsgroup', 'reuters', 'yahoo', 'dbpedia']:
             # multiple gradient updates for the same mini-batch if local_epochs > 1
             for local_epoch in range(self.args.local_epochs - 1):
-                batch_loss = self.training_step(samples , labels)
+                batch_loss = self._perform_pcr_step(samples , labels)
         else:
             # multiple gradient updates for the same mini-batch if local_epochs > 1
             for local_epoch in range(self.args.local_epochs - 1):
-                batch_loss = self.training_step(self.augment(samples) , labels)
+                batch_loss = self._perform_pcr_step(self.augment(samples) , labels)
+        
+        if print_loss:
+            print(f'loss = {batch_loss}')
         self.train_task_loss += batch_loss
 
 
@@ -278,7 +281,7 @@ class Client:
         # multiple gradient updates for the same mini-batch if local_epochs > 1
         for local_epoch in range(self.args.local_epochs):
             batch_loss = self._perform_pcr_step(samples, labels)
-            print(f"local epoch {local_epoch}, loss: {batch_loss}")
+            # print(f"local epoch {local_epoch}, loss: {batch_loss}")
 
         self.train_task_loss += batch_loss
 
@@ -305,7 +308,7 @@ class Client:
                 combined_x, combined_y = samples, labels
 
             batch_loss = self._perform_pcr_step(combined_x, combined_y)
-            print(f"local epoch {local_epoch}, loss: {batch_loss}")
+            # print(f"local epoch {local_epoch}, loss: {batch_loss}")
 
         self.train_task_loss += batch_loss
 

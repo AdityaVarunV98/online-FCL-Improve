@@ -28,6 +28,7 @@ for run in range(args.n_runs):
     clients = initialize_clients(args, loader_clients, cls_assignment_list, run)
 
     start_time = datetime.now()
+    # c=0
     while not all([client.train_completed for client in clients]):
         for client in clients:
             if not client.train_completed:
@@ -41,7 +42,11 @@ for run in range(args.n_runs):
                             # Require changes here to train with the new loss (change the training_step function)
                             client.train_with_memory(samples, labels)
                     else:
-                        client.train(samples, labels)
+                        # if not c%100:
+                        #     client.train(samples, labels, print_loss = True)
+                        # else:
+                        client.train(samples, labels, print_loss = False)
+                        # c+=1
                 else:
                     # print(f'Run {run} - Client {client.client_id} - Task {client.task_id} completed - {client.get_current_task()}')
                     class_counts = client.get_task_class_counts(client.task_id)
