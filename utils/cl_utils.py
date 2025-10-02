@@ -113,21 +113,26 @@ class Client:
         return noisy_embedding_matrix
     
     # PCR
-    def _perform_pcr_step(self, samples, labels):
+    def _perform_pcr_step(self, samples, labels, noAugment=False):
         """
         Performs a single training step using the logic from the PCR agent.
         """
         from utils.setup_elements import transforms_match, transforms_aug
         
-        # Augment based on dataset
-        samples_aug = torch.stack([transforms_aug[self.args.dataset_name](img.cpu()) for img in samples])
-        
-        if torch.cuda.is_available():
-            samples_aug = samples_aug.cuda()
+        if noAugment:
+            # Only original samples
+            final_x = samples
+            final_y = labels
+        else:
+            # Augment based on dataset
+            samples_aug = torch.stack([transforms_aug[self.args.dataset_name](img.cpu()) for img in samples])
+            
+            if torch.cuda.is_available():
+                samples_aug = samples_aug.cuda()
 
-        # Concat with the original
-        final_x = torch.cat([samples, samples_aug])
-        final_y = torch.cat([labels, labels])
+            # Concat with the original
+            final_x = torch.cat([samples, samples_aug])
+            final_y = torch.cat([labels, labels])
 
         # Get features and logits 
         features, logits = self.model(final_x, return_features=True)
@@ -154,19 +159,31 @@ class Client:
         
         return loss.item()
 
+    # def train(self, samples, labels, print_loss=False):
+    #     self.model.train()
+    #     samples, labels = samples.to(self.args.device), labels.to(self.args.device)
+    #     batch_loss = self._perform_pcr_step(samples, labels)
+    #     if self.args.dataset_name in ['newsgroup', 'reuters', 'yahoo', 'dbpedia']:
+    #         # multiple gradient updates for the same mini-batch if local_epochs > 1
+    #         for local_epoch in range(self.args.local_epochs - 1):
+    #             batch_loss = self._perform_pcr_step(samples , labels)
+    #     else:
+    #         # multiple gradient updates for the same mini-batch if local_epochs > 1
+    #         for local_epoch in range(self.args.local_epochs - 1):
+    #             batch_loss = self._perform_pcr_step(self.augment(samples) , labels)
+        
+    #     if print_loss:
+    #         print(f'loss = {batch_loss}')
+    #     self.train_task_loss += batch_loss
+
     def train(self, samples, labels, print_loss=False):
         self.model.train()
         samples, labels = samples.to(self.args.device), labels.to(self.args.device)
-        batch_loss = self._perform_pcr_step(samples, labels)
-        if self.args.dataset_name in ['newsgroup', 'reuters', 'yahoo', 'dbpedia']:
-            # multiple gradient updates for the same mini-batch if local_epochs > 1
-            for local_epoch in range(self.args.local_epochs - 1):
-                batch_loss = self._perform_pcr_step(samples , labels)
-        else:
-            # multiple gradient updates for the same mini-batch if local_epochs > 1
-            for local_epoch in range(self.args.local_epochs - 1):
-                batch_loss = self._perform_pcr_step(self.augment(samples) , labels)
-        
+
+        for local_epoch in range(self.args.local_epochs):
+            noAug = local_epoch < self.args.non_augment_epochs
+            batch_loss = self._perform_pcr_step(samples, labels, noAugment=noAug)
+
         if print_loss:
             print(f'loss = {batch_loss}')
         self.train_task_loss += batch_loss
@@ -280,7 +297,8 @@ class Client:
 
         # multiple gradient updates for the same mini-batch if local_epochs > 1
         for local_epoch in range(self.args.local_epochs):
-            batch_loss = self._perform_pcr_step(samples, labels)
+            noAug = local_epoch < self.args.non_augment_epochs
+            batch_loss = self._perform_pcr_step(samples, labels, noAugment=noAug)
             # print(f"local epoch {local_epoch}, loss: {batch_loss}")
 
         self.train_task_loss += batch_loss
@@ -307,7 +325,9 @@ class Client:
             else:
                 combined_x, combined_y = samples, labels
 
-            batch_loss = self._perform_pcr_step(combined_x, combined_y)
+            noAug = local_epoch < self.args.non_augment_epochs
+            batch_loss = self._perform_pcr_step(combined_x, combined_y, noAugment=noAug)
+
             # print(f"local epoch {local_epoch}, loss: {batch_loss}")
 
         self.train_task_loss += batch_loss

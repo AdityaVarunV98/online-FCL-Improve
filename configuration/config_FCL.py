@@ -60,10 +60,31 @@ def base_parser():
     )
 
     parser.add_argument(
+        "--temp",
+        type=float,
+        default=0.07,
+        help="Temperature of the supcon loss",
+    )
+
+    parser.add_argument(
+        "--sup_type",
+        type=str,
+        default="proxy",
+        help="Type of the supcon loss [proxy, all]",
+    )
+
+    parser.add_argument(
         "--local_epochs",
         type=int,
         default=3,
         help="Number of epochs at batch-level (multiple gradient updates per batch)",
+    )
+
+    parser.add_argument(
+        "--non_augment_epochs",
+        type=int,
+        default=0,
+        help="Number of epochs at batch-level without considering image augmentations (multiple gradient updates per batch)",
     )
 
     parser.add_argument(
