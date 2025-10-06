@@ -196,6 +196,13 @@ def base_parser():
     )
 
     parser.add_argument(
+        "--eval_gap",
+        type=int,
+        default=40,
+        help="Evaluation of the clients before and after the aggregation steps",
+    )
+
+    parser.add_argument(
         "--mu",
         type=float,
         default=0.01,

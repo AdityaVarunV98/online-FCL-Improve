@@ -746,6 +746,7 @@ def assign_data_per_client(args, run):
             if args.overlap == 'non-overlap':
                 np.random.seed((run+1) * (client_id+1))
             else:
+                # seed change
                 np.random.seed(run)
             cls_assignment = np.arange(args.n_classes)
             np.random.shuffle(cls_assignment)

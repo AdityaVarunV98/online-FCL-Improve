@@ -379,7 +379,62 @@ class Client:
     #         logger['test']['acc'][self.client_id][run][self.task_id][task_id_eval] = accuracy
     #     return logger
     
+    def intermediate_test(self, run, stage="pr", comm_round=None):
+        """
+        Evaluate without updating logger. Save confusion matrix with stage + comm_round tag.
+        stage: "preagg" or "postagg"
+        """
+        self.model.eval()
+        metrics = {}
 
+        for task_id_eval, eval_loader in enumerate(self.test_loader):
+            if task_id_eval > self.task_id:
+                break
+
+            y_pred_list, y_true_list = [], []
+            for samples, labels in eval_loader:
+                samples, labels = samples.to(self.args.device), labels.to(self.args.device)
+                y_true_list.append(labels)
+
+                if self.agent_name == 'PCR':
+                    # PCR inference
+                    seen_classes = self.cls_assignment[:(task_id_eval + 1) * self.args.n_classes_per_task]
+                    all_seen_proxies = F.normalize(self.model.linear.weight[seen_classes], p=2, dim=1)
+
+                    features, _ = self.model(samples, return_features=True)
+                    features = F.normalize(features, p=2, dim=1)
+                    logits = torch.matmul(features, all_seen_proxies.T)
+
+                    preds_relative = logits.argmax(dim=1)
+                    preds = torch.tensor([seen_classes[i] for i in preds_relative], device=samples.device)
+                else:
+                    logits = self.model(samples)
+                    preds = logits.argmax(dim=1)
+
+                y_pred_list.append(preds)
+
+            y_true = torch.cat(y_true_list).cpu()
+            y_pred = torch.cat(y_pred_list).cpu()
+            accuracy = (y_true == y_pred).sum().float() / len(y_true)
+            metrics[f"task{task_id_eval}_acc"] = accuracy.item()
+
+            # Save CM with stage + comm_round info
+            round_tag = f"_ro{comm_round}" if comm_round is not None else ""
+            cm = confusion_matrix(y_true, y_pred, labels=self.cls_assignment)
+            cm_display = ConfusionMatrixDisplay(cm, display_labels=self.cls_assignment).plot()
+            plt.tight_layout()
+            plt.title(f'{stage.upper()} Acc: {accuracy:.3f}')
+            plt.savefig(
+                f'{self.args.dir_results}cl{self.client_id}_ru{run}{round_tag}_{stage}_cm_{self.task_id}_{task_id_eval}.pdf',
+                format='pdf'
+            )
+            plt.close()
+
+        return metrics
+
+    
+    
+    
     @torch.no_grad()
     def test(self, logger, run):
         self.model.eval()

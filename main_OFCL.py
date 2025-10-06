@@ -29,6 +29,8 @@ for run in range(args.n_runs):
 
     start_time = datetime.now()
     # c=0
+    comm_round = 0
+    
     while not all([client.train_completed for client in clients]):
         for client in clients:
             if not client.train_completed:
@@ -73,18 +75,33 @@ for run in range(args.n_runs):
         # COMMUNICATION ROUND PART
         selected_clients = [client.client_id for client in clients if (client.num_batches >= args.burnin and client.num_batches % args.jump == 0 and client.train_completed == False)]
         if len(selected_clients) > 1:
-            # communication round when all clients process a mini-batch
+            comm_round += 1  # keep a counter in args
+
+            # --- PRE-AGGREGATION eval ---
+            if comm_round % args.eval_gap == 0 or comm_round % args.eval_gap == 1:
+                for cid in selected_clients:
+                    metrics = clients[cid].intermediate_test(run, stage="pr", comm_round=comm_round)
+                    print(f"Pre-agg round {comm_round}, client {cid}, accs: {metrics}")
+
+            # FedAvg
             if args.fl_update.startswith('w_'):
                 global_model = weightedFedAvg(args, selected_clients, clients)
             else:
                 global_model = FedAvg(args, selected_clients, clients)
 
             global_parameters = global_model.state_dict()
-            # local models update with averaged global parameters
+
+            # update local models
             for client_id in selected_clients:
                 clients[client_id].save_last_local_model()
                 clients[client_id].update_parameters(global_parameters)
                 clients[client_id].save_last_global_model(global_model)
+
+            # --- POST-AGGREGATION eval ---
+            if comm_round % args.eval_gap == 0:
+                for cid in selected_clients:
+                    metrics = clients[cid].intermediate_test(run, stage="po", comm_round=comm_round)
+                    print(f"Post-agg round {comm_round}, client {cid}, accs: {metrics}")
 
     end_time = datetime.now()
     print(f'Duration: {end_time - start_time}')

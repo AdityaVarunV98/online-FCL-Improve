@@ -128,6 +128,7 @@ def initialize_clients(args, loader_clients, cls_assignment_list, run):
         loader_client = loader_clients[client_id]
         cls_assignment_client = cls_assignment_list[client_id]
         # for reproducibility purposes
+        # seed change
         np.random.seed(run)
         torch.manual_seed(run)
         torch.backends.cudnn.deterministic = True
