@@ -6,6 +6,9 @@ __pycache__/
 data/
 data_archive/
 
+# Datasets folder
+results/
+
 # Generated output and results
 output/
 
