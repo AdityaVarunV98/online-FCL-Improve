@@ -220,6 +220,98 @@ def modelAvg(args, list_models):
     return global_model
 
 
+def FedAvg_partial(args, selected_clients, clients, param_indices):
+    global_model, _, _ = initialize_model(args)
+    global_params = list(global_model.parameters())
+
+    client_weights = [clients[cid].get_weight() for cid in selected_clients]
+    total_weights = sum(client_weights)
+    client_weights = [w / total_weights for w in client_weights]
+    client_params = [list(clients[cid].get_parameters()) for cid in selected_clients]
+
+    for i in param_indices:
+        weighted_param = torch.zeros_like(global_params[i])
+        for j in range(len(client_params)):
+            weighted_param.data += client_weights[j] * client_params[j][i].data
+        global_params[i].data = weighted_param
+
+    return global_model
+
+
+def weightedFedAvg_partial(args, selected_clients, clients, param_indices):
+    global_model, _, _ = initialize_model(args)
+    global_params = list(global_model.parameters())
+
+    count_clients_per_class = defaultdict(list)
+    for cid in selected_clients:
+        for cls in clients[cid].get_current_task():
+            count_clients_per_class[cls].append(cid)
+
+    class_models = []
+    for cls, cids in count_clients_per_class.items():
+        if len(cids) > 1:
+            avg_model = FedAvg_partial(args, cids, clients, param_indices)
+            class_models.append(avg_model)
+        else:
+            class_models.append(clients[cids[0]].model)
+
+    return modelAvg(args, class_models)
+
+
+def FedAvg_split(args, selected_clients, clients, split_strategy):
+    """
+    Perform different Fed strategies for the model body and classifier.
+    The split_strategy parameter defines which averaging rule to apply to each part:
+        split_strategy = {
+            "body": "fedavg" or "weighted",
+            "classifier": "fedavg" or "weighted"
+        }
+    """
+
+    global_model, _, _ = initialize_model(args)
+    param_names = [name for name, _ in global_model.named_parameters()]
+    classifier_indices = [i for i, name in enumerate(param_names) if name.startswith("linear")]
+    body_indices = [i for i in range(len(param_names)) if i not in classifier_indices]
+
+    # Get list of client models
+    client_models = [clients[cid].model for cid in selected_clients]
+
+    # ---------- BODY AGGREGATION ----------
+    if split_strategy.get("body", "fedavg") == "weighted":
+        body_model = weightedFedAvg_partial(args, selected_clients, clients, body_indices)
+    else:
+        body_model = FedAvg_partial(args, selected_clients, clients, body_indices)
+
+    # ---------- CLASSIFIER AGGREGATION ----------
+    if split_strategy.get("classifier", "fedavg") == "weighted":
+        classifier_model = weightedFedAvg_partial(args, selected_clients, clients, classifier_indices)
+    else:
+        classifier_model = FedAvg_partial(args, selected_clients, clients, classifier_indices)
+
+    # ---------- COMBINE ----------
+    global_model_params = list(global_model.parameters())
+    body_params = list(body_model.parameters())
+    classifier_params = list(classifier_model.parameters())
+
+    for i in body_indices:
+        global_model_params[i].data = body_params[i].data.clone()
+    for i in classifier_indices:
+        global_model_params[i].data = classifier_params[i].data.clone()
+
+    # ---------- FINAL MODEL MERGE ----------
+    last_global_model = None
+    for client_id in selected_clients:
+        last_global_model_tmp = clients[client_id].get_last_global_model()
+        if last_global_model_tmp is not None:
+            last_global_model = last_global_model_tmp
+            break
+
+    if last_global_model is None:
+        return global_model
+    else:
+        return modelAvg(args, [last_global_model, global_model])
+
+
 @torch.no_grad()
 def test_global_model(args, test_loader, model, logger, run, mode='global_test'):
     task_id = args.n_tasks - 1

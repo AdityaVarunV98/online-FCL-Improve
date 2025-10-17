@@ -3,7 +3,7 @@ import numpy as np
 
 from configuration import config_FCL
 from utils.data_loader import get_loader_all_clients
-from utils.train_utils import get_free_gpu_idx, get_logger, initialize_clients, FedAvg, weightedFedAvg, test_global_model, save_results
+from utils.train_utils import get_free_gpu_idx, get_logger, initialize_clients, FedAvg, weightedFedAvg, test_global_model, save_results, FedAvg_split
 from datetime import datetime
 
 args = config_FCL.base_parser()
@@ -31,6 +31,8 @@ for run in range(args.n_runs):
     # c=0
     comm_round = 0
     
+    # print(clients[0].model)
+
     while not all([client.train_completed for client in clients]):
         for client in clients:
             if not client.train_completed:
@@ -83,8 +85,13 @@ for run in range(args.n_runs):
                     metrics = clients[cid].intermediate_test(run, stage="pr", comm_round=comm_round)
                     print(f"Pre-agg round {comm_round}, client {cid}, accs: {metrics}")
 
-            # FedAvg
-            if args.fl_update.startswith('w_'):
+            if args.fl_update == "split":
+                split_strategy = {
+                    "body": "fedavg",
+                    "classifier": "weighted"
+                }
+                global_model = FedAvg_split(args, selected_clients, clients, split_strategy)
+            elif args.fl_update.startswith("w_"):
                 global_model = weightedFedAvg(args, selected_clients, clients)
             else:
                 global_model = FedAvg(args, selected_clients, clients)

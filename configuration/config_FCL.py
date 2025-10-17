@@ -192,7 +192,7 @@ def base_parser():
         "--fl_update",
         type=str,
         default='w_favg',
-        help="Memory sampling strategy [favg (FedAvg), w_favg (weighted FedAvg), fprox (FedProx), w_fprox (weighted fprox)]",
+        help="Memory sampling strategy [favg (FedAvg), w_favg (weighted FedAvg), fprox (FedProx), w_fprox (weighted fprox), split (separate averaging strategies)]",
     )
 
     parser.add_argument(
