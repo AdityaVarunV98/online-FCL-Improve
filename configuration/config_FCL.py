@@ -166,6 +166,27 @@ def base_parser():
         help="Number of clients",
     )
 
+    parser.add_argument(
+        "--class_overlap",
+        type=bool,
+        default=False,
+        help="Overlapping tasks within clients across tasks (boolean)",
+    )
+
+    parser.add_argument(
+        "--client_specific_tasks",
+        type=bool,
+        default=False,
+        help="Whether each client has a different set of tasks",
+    )
+
+    parser.add_argument(
+        "--dirichlet_alpha",
+        type=float,
+        default=0.5,
+        help="Dirichlet value for class splitting across clients, across tasks within a client",
+    )
+
     ####################### FEDERATED PARAMETERS ###########################
     parser.add_argument(
         "--overlap",

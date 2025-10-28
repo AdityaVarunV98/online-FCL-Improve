@@ -74,8 +74,13 @@ for run in range(args.n_runs):
                     else:
                         client.task_id += 1
 
+        # print("Number of comm rounds so far:", comm_round)
+        # for client in clients:
+        #     print(f"client {client.client_id}, batch number {client.batches_total}")
+
+
         # COMMUNICATION ROUND PART
-        selected_clients = [client.client_id for client in clients if (client.num_batches >= args.burnin and client.num_batches % args.jump == 0 and client.train_completed == False)]
+        selected_clients = [client.client_id for client in clients if (client.num_batches >= args.burnin and client.batches_total % args.jump == 0 and client.train_completed == False)]
         if len(selected_clients) > 1:
             comm_round += 1  # keep a counter in args
 
@@ -112,6 +117,7 @@ for run in range(args.n_runs):
 
     end_time = datetime.now()
     print(f'Duration: {end_time - start_time}')
+    print(f"Total communication rounds: {comm_round}")
     # global model accuracy when all clients finish their training on all tasks (FedCIL ICLR2023)
     logger = test_global_model(args, global_test_loader, global_model, logger, run)
 

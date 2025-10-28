@@ -37,6 +37,7 @@ class Client:
         self.train_task_loss = 0
         self.train_completed = False
         self.num_batches = 0
+        self.batches_total = 0
         self.train_iterators = [iter(loader) for loader in self.train_loader]
         self.importance_weight = 1.0
         self.global_model = None
@@ -67,12 +68,17 @@ class Client:
             self.seen_per_task += n_samples
             self.seen += n_samples
             self.num_batches += 1
+            self.batches_total += 1
             self.importance_weight = self.compute_weight()
             return samples, labels
             
         except StopIteration: # task is completed
             # reset counters
             self.seen_per_task = 0
+
+            # To keep global count to make sure they all undergo averaging simultaneously
+            self.batches_total += 1
+            
             return None, None
 
 
@@ -466,18 +472,23 @@ class Client:
                 
                 y_pred_list.append(preds)
 
-            y_true = torch.cat(y_true_list).cpu()
-            y_pred = torch.cat(y_pred_list).cpu()
-            
-            accuracy = (y_true == y_pred).sum().float() / len(y_true)
-            logger['test']['acc'][self.client_id][run][self.task_id][task_id_eval] = accuracy.item()
-            
-            cm = confusion_matrix(y_true, y_pred, labels=self.cls_assignment)
-            cm_display = ConfusionMatrixDisplay(cm, display_labels=self.cls_assignment).plot()
-            plt.tight_layout()
-            plt.title(f'Accuracy: {accuracy:.3f}')
-            plt.savefig(f'{self.args.dir_results}client{self.client_id}_run{run}_cm_{self.task_id}_{task_id_eval}.pdf', format='pdf')
-            plt.close()
+            if len(y_true_list) == 0 or len(y_pred_list) == 0:
+                # Optional: mark as None or 0 instead of skipping
+                print(f"Empty test set client ID {self.client_id}, run {run}, task {self.task_id}")
+                logger['test']['acc'][self.client_id][run][self.task_id][task_id_eval] = None
+            else:
+                y_true = torch.cat(y_true_list).cpu()
+                y_pred = torch.cat(y_pred_list).cpu()
+                
+                accuracy = (y_true == y_pred).sum().float() / len(y_true)
+                logger['test']['acc'][self.client_id][run][self.task_id][task_id_eval] = accuracy.item()
+                
+                cm = confusion_matrix(y_true, y_pred, labels=self.cls_assignment)
+                cm_display = ConfusionMatrixDisplay(cm, display_labels=self.cls_assignment).plot()
+                plt.tight_layout()
+                plt.title(f'Accuracy: {accuracy:.3f}')
+                plt.savefig(f'{self.args.dir_results}client{self.client_id}_run{run}_cm_{self.task_id}_{task_id_eval}.pdf', format='pdf')
+                plt.close()
         
         return logger
     
@@ -566,12 +577,18 @@ class Client:
                     preds = logits.argmax(dim=1)
                 
                 y_pred_list.append(preds)
-
-            y_true = torch.cat(y_true_list)
-            y_pred = torch.cat(y_pred_list)
             
-            accuracy = (y_true == y_pred).sum().float() / len(y_true)
-            logger['val']['acc'][self.client_id][run][self.task_id][task_id_eval] = accuracy.item()
+            
+            if len(y_true_list) == 0 or len(y_pred_list) == 0:
+                # Optional: mark as None or 0 instead of skipping
+                print(f"Empty validation set client ID {self.client_id}, run {run}, task {self.task_id}")
+                logger['val']['acc'][self.client_id][run][self.task_id][task_id_eval] = None
+            else:
+                y_true = torch.cat(y_true_list)
+                y_pred = torch.cat(y_pred_list)
+                
+                accuracy = (y_true == y_pred).sum().float() / len(y_true)
+                logger['val']['acc'][self.client_id][run][self.task_id][task_id_eval] = accuracy.item()
             
         return logger
 
@@ -612,18 +629,23 @@ class Client:
                 
                 y_pred_list.append(preds)
 
-        y_true = torch.cat(y_true_list).cpu().numpy()
-        y_pred = torch.cat(y_pred_list).cpu().numpy()
-        
-        final_balanced_accuracy = balanced_accuracy_score(y_true, y_pred)
-        logger['test']['bal_acc'][self.client_id][run] = final_balanced_accuracy
+        if len(y_true_list) == 0 or len(y_pred_list) == 0:
+            # Optional: mark as None or 0 instead of skipping
+            print(f"Empty test set client ID {self.client_id}, run {run}, task {self.task_id}")
+            logger['test']['bal_acc'][self.client_id][run] = None
+        else:
+            y_true = torch.cat(y_true_list).cpu().numpy()
+            y_pred = torch.cat(y_pred_list).cpu().numpy()
+            
+            final_balanced_accuracy = balanced_accuracy_score(y_true, y_pred)
+            logger['test']['bal_acc'][self.client_id][run] = final_balanced_accuracy
 
-        cm = confusion_matrix(y_true, y_pred, labels=self.cls_assignment)
-        cm_display = ConfusionMatrixDisplay(cm, display_labels=self.cls_assignment).plot()
-        plt.tight_layout()
-        plt.title(f'Final Balanced Accuracy: {final_balanced_accuracy:.3f}')
-        plt.savefig(f'{self.args.dir_results}client{self.client_id}_run{run}_cm_final.pdf', format='pdf')
-        plt.close()
+            cm = confusion_matrix(y_true, y_pred, labels=self.cls_assignment)
+            cm_display = ConfusionMatrixDisplay(cm, display_labels=self.cls_assignment).plot()
+            plt.tight_layout()
+            plt.title(f'Final Balanced Accuracy: {final_balanced_accuracy:.3f}')
+            plt.savefig(f'{self.args.dir_results}client{self.client_id}_run{run}_cm_final.pdf', format='pdf')
+            plt.close()
 
         return logger
 
