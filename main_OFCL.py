@@ -78,9 +78,25 @@ for run in range(args.n_runs):
         # for client in clients:
         #     print(f"client {client.client_id}, batch number {client.batches_total}")
 
+        for client in clients:
+            if client.train_completed == False:
+                total_batches = client.batches_total
+                break
 
         # COMMUNICATION ROUND PART
-        selected_clients = [client.client_id for client in clients if (client.num_batches >= args.burnin and client.batches_total % args.jump == 0 and client.train_completed == False)]
+        if args.train_completed_fed == "base":
+            selected_clients = [client.client_id for client in clients if (client.num_batches >= args.burnin and client.batches_total % args.jump == 0 and client.train_completed == False)]
+        else:
+            selected_clients = [client.client_id for client in clients if (client.num_batches >= args.burnin and client.batches_total % args.jump == 0) or (client.train_completed == True and total_batches % args.jump == 0)]
+        
+        # Debugging
+        # if len(selected_clients) > 1:
+        #     print(total_batches)
+        #     print("Selected Clients")
+        #     for client_id in selected_clients:
+        #         print(f"client {client_id}: train completed? {clients[client_id].train_completed}")
+        #     print(f"Number of communication rounds: {comm_round}")
+
         if len(selected_clients) > 1:
             comm_round += 1  # keep a counter in args
 
@@ -103,11 +119,20 @@ for run in range(args.n_runs):
 
             global_parameters = global_model.state_dict()
 
-            # update local models
-            for client_id in selected_clients:
-                clients[client_id].save_last_local_model()
-                clients[client_id].update_parameters(global_parameters)
-                clients[client_id].save_last_global_model(global_model)
+            # update local models (redundant loops, but works)
+            if args.train_completed_fed == "no_update":
+                for client_id in selected_clients:
+                    if clients[client_id].train_completed == False:
+                        clients[client_id].save_last_local_model()
+                        clients[client_id].update_parameters(global_parameters)
+                        clients[client_id].save_last_global_model(global_model)
+            else:
+                for client_id in selected_clients:
+                    clients[client_id].save_last_local_model()
+                    clients[client_id].update_parameters(global_parameters)
+                    clients[client_id].save_last_global_model(global_model)
+
+            
 
             # --- POST-AGGREGATION eval ---
             if comm_round % args.eval_gap == 0:

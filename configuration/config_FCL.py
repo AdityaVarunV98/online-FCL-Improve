@@ -217,6 +217,13 @@ def base_parser():
     )
 
     parser.add_argument(
+        "--train_completed_fed",
+        type=str,
+        default='base',
+        help="Handling clients that have completed training [base, update, no_update]",
+    )
+
+    parser.add_argument(
         "--eval_gap",
         type=int,
         default=40,
