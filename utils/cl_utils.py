@@ -322,7 +322,12 @@ class Client:
 
         batch_loss = None
         for local_epoch in range(self.args.local_epochs):
-            mem_x, mem_y, _ = self.memory.random_sampling(self.args.batch_size, exclude_task=self.task_id)
+            if self.args.sampling_strategy == "random":
+                mem_x, mem_y, _ = self.memory.random_sampling(self.args.batch_size, exclude_task=self.task_id)
+            elif self.args.sampling_strategy == "class_balanced":
+                mem_x, mem_y, _ = self.memory.class_group_sampling(self.args.batch_size, exclude_task=self.task_id)
+            elif self.args.sampling_strategy == "class_group":
+                mem_x, mem_y, _ = self.memory.class_group_sampling(self.args.batch_size, exclude_task=self.task_id, r=self.args.r_class, class_balanced=False)
 
             if mem_x.size(0) > 0:
                 mem_x, mem_y = mem_x.to(self.args.device), mem_y.to(self.args.device)

@@ -126,7 +126,14 @@ def base_parser():
         "--sampling_strategy",
         type=str,
         default='random',
-        help="Memory sampling strategy [random, uncertainty]",
+        help="Memory sampling strategy [random, uncertainty, class_balanced, class_group]",
+    )
+
+    parser.add_argument(
+        "--r_class",
+        type=int,
+        default=3,
+        help="Number of samples chosen during class_group sampling",
     )
 
 

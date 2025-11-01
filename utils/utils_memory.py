@@ -29,6 +29,9 @@ class Memory:
         augmentations = torch.nn.Sequential(flip, rotation, brightness, perspective, affine, zoom)
         self.augmentations = augmentations
 
+        # for class_group_sampling
+        self.class_seen_history = set()
+
     @property
     def x(self):
         return self.memory_x
@@ -198,6 +201,131 @@ class Memory:
         else:
             indices = torch.from_numpy(np.random.choice(self.x.size(0), subsample_size, replace=False))
             return self.x[indices], self.y[indices], self.t[indices]
+        
+    def class_group_sampling(self, subsample_size, r=3, exclude_task=None, class_balanced=True, debug_mode=False):
+        """
+        Sample r classes at a time from memory, cycling through all classes.
+
+        Args:
+            subsample_size (int): Total number of samples to draw.
+            r (int): Number of distinct classes to sample in this round.
+            exclude_task (optional): Task ID to exclude from sampling.
+            class_balanced (bool): 
+                If True, sample equally from all valid classes (ignoring r).
+                If False, sample equally from r randomly chosen classes.
+        Returns:
+            x, y, t (torch.Tensor): Sampled memory batch.
+        """
+
+        # Step 1: Get valid indices based on exclude_task
+        if exclude_task is not None:
+            valid_indices = (self.t[:self.seen] != exclude_task)
+            valid_indices = valid_indices.nonzero().squeeze()
+        else:
+            valid_indices = torch.arange(self.x.size(0))
+
+        valid_classes = self.y[valid_indices].unique().tolist()
+
+        # Step 2: Determine remaining unseen classes for this cycle
+        remaining_classes = [c for c in valid_classes if c not in self.class_seen_history]
+
+        # Reset cycle if all have been seen
+        if len(remaining_classes) == 0:
+            self.class_seen_history.clear()
+            remaining_classes = valid_classes
+            if debug_mode:
+                print("Sampling set for class group sampling reset")
+
+        # Step 3: Select r classes randomly (for the non-balanced case)
+        chosen_classes = np.random.choice(remaining_classes, min(r, len(remaining_classes)), replace=False)
+        self.class_seen_history.update(chosen_classes)
+
+        indices = np.array([])
+
+        # ---- CLASS BALANCED CASE ----
+        if class_balanced:
+            # Balance sampling across ALL valid classes
+            subsample_per_class = subsample_size // len(valid_classes)
+            leftover = subsample_size % len(valid_classes)
+
+            for cls in valid_classes:
+                cls_indices = valid_indices[(self.y[valid_indices] == cls).nonzero().squeeze()].cpu().numpy()
+
+                # Handle single-element scalar
+                if np.ndim(cls_indices) == 0:
+                    cls_indices = np.array([cls_indices])
+
+                if len(cls_indices) <= subsample_per_class:
+                    selected = cls_indices
+                else:
+                    k = subsample_per_class + (1 if leftover > 0 else 0)
+                    selected = np.random.choice(cls_indices, min(k, len(cls_indices)), replace=False)
+                    leftover -= 1
+
+                indices = np.concatenate((indices, selected), None)
+
+        # ---- NON-BALANCED CASE ----
+        else:
+            # Choose samples only from the chosen classes (equally among them)
+            subsample_per_class = subsample_size // len(chosen_classes)
+            leftover = subsample_size % len(chosen_classes)
+
+            for cls in chosen_classes:
+                # cls_indices = (self.y[valid_indices] == cls).nonzero().squeeze().cpu().numpy()
+                cls_indices = valid_indices[(self.y[valid_indices] == cls).nonzero().squeeze()].cpu().numpy()
+                # print("valid_classes: ", valid_classes)
+                # print("remaining_classes: ", remaining_classes)
+                # print("chosen_classes: ", chosen_classes)
+
+                # Handle single-element scalar
+                if np.ndim(cls_indices) == 0:
+                    cls_indices = np.array([cls_indices])
+                
+                # if cls == 24 or cls == 13 or cls == 73:
+                # print(cls_indices)
+
+
+                if len(cls_indices) <= subsample_per_class:
+                    selected = cls_indices
+                else:
+                    k = subsample_per_class + (1 if leftover > 0 else 0)
+                    selected = np.random.choice(cls_indices, min(k, len(cls_indices)), replace=False)
+                    leftover -= 1
+
+                indices = np.concatenate((indices, selected), None)
+
+        indices = torch.tensor(indices, dtype=torch.long)
+
+        if debug_mode:
+            sampled_labels = self.y[indices]
+            unique_classes, counts = torch.unique(sampled_labels, return_counts=True)
+            print("\nSamples per class in this batch:")
+            c=0
+            for cls, count in zip(unique_classes.tolist(), counts.tolist()):
+                print(f"  Class {cls}: {count} samples")
+                c+=1
+            if c > r:
+                print(f"\n--- Debug (r={r}, class_balanced={class_balanced}) ---")
+                print(f"Chosen classes: {chosen_classes}")
+                print(f"Remaining classes: {remaining_classes}")
+                print(f"Class history: {self.class_seen_history}")
+                print(f"Valid classes: {valid_classes}")
+
+                sampled_labels = self.y[indices]
+                unique_classes, counts = torch.unique(sampled_labels, return_counts=True)
+                print(f"Unique sampled classes: {unique_classes.tolist()}")
+                print(f"Samples per class: {dict(zip(unique_classes.tolist(), counts.tolist()))}")
+                print(f"Tasks in batch: {self.t[indices].unique().tolist()}")
+
+                extra = set(unique_classes.tolist()) - set(chosen_classes.tolist())
+                if extra:
+                    print(f"Extra classes found in batch: {extra}")
+                print("--- End debug ---\n")
+                
+                raise RuntimeError("Stopping execution: too many unique classes sampled.")
+
+
+        return self.x[indices], self.y[indices], self.t[indices]
         
 
     def balanced_random_sampling(self, subsample_size, exclude_task=None):  
