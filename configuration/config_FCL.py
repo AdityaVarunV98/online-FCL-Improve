@@ -67,6 +67,13 @@ def base_parser():
     )
 
     parser.add_argument(
+        "--lambda_contrastive",
+        type=float,
+        default=1.0,
+        help="Temperature of the supcon loss",
+    )
+
+    parser.add_argument(
         "--sup_type",
         type=str,
         default="proxy",

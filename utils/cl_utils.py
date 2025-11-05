@@ -5,6 +5,7 @@ from sklearn.metrics import balanced_accuracy_score, confusion_matrix, Confusion
 from torchvision import transforms
 from copy import deepcopy
 import torch.nn.functional as F
+from utils.weighted_con import WeightedContrastiveLoss
 
 plt.rcParams.update({
     "font.family": "serif",})
@@ -20,7 +21,12 @@ class Client:
         self.criterion_ce = criterion['ce']
         self.criterion_supcon = criterion['supcon']
         self.client_id = client_id
-        self.agent_name = "PCR"
+        self.agent_name = "WCL"
+
+        self.weighted_contrastive_loss = WeightedContrastiveLoss(
+            temperature=args.temp,
+            beta=0.99
+        )
 
         self.train_loader = loaders[0]
         self.val_loader = loaders[1]
@@ -289,28 +295,39 @@ class Client:
     #         self.memory.reservoir_update(samples, labels, self.task_id)
     #     elif self.args.update_strategy == 'balanced':
     #         self.memory.class_balanced_update(samples, labels, self.task_id, self.model, self.get_current_task())
-
-    # CHH: using PCR
+    
     def train_with_update(self, samples, labels):
+        """Train on current batch only, with contrastive + classification loss."""
         self.model.train()
         samples, labels = samples.to(self.args.device), labels.to(self.args.device)
 
-        # multiple gradient updates for the same mini-batch if local_epochs > 1
         for local_epoch in range(self.args.local_epochs):
-            noAug = local_epoch < self.args.non_augment_epochs
-            batch_loss = self._perform_pcr_step(samples, labels, noAugment=noAug)
-            # print(f"local epoch {local_epoch}, loss: {batch_loss}")
+            # Forward
+            features, outputs = self.model(samples, return_features=True)
+            cls_loss = F.cross_entropy(outputs, labels)
 
-        self.train_task_loss += batch_loss
+            # Contrastive part
+            cont_loss = self.weighted_contrastive_loss(features, labels)
 
+            # Total loss
+            batch_loss = self.args.lambda_contrastive * cls_loss + cont_loss
+
+            # Backpropagation
+            self.optimizer.zero_grad()
+            batch_loss.backward()
+            self.optimizer.step()
+
+        self.train_task_loss += batch_loss.item()
+
+        # Memory update
         if self.args.update_strategy == 'reservoir':
             self.memory.reservoir_update(samples, labels, self.task_id)
         elif self.args.update_strategy == 'balanced':
             self.memory.class_balanced_update(samples, labels, self.task_id, self.model, self.get_current_task())
 
 
-    # CHH: using PCR
     def train_with_memory(self, samples, labels):
+        """Train using both current and memory samples, same loss."""
         self.model.train()
         samples, labels = samples.to(self.args.device), labels.to(self.args.device)
 
@@ -318,20 +335,32 @@ class Client:
         for local_epoch in range(self.args.local_epochs):
             mem_x, mem_y, _ = self.memory.random_sampling(self.args.batch_size, exclude_task=self.task_id)
 
+            # Combine with memory samples (if available)
             if mem_x.size(0) > 0:
                 mem_x, mem_y = mem_x.to(self.args.device), mem_y.to(self.args.device)
-                combined_x = torch.cat([samples, mem_x])
-                combined_y = torch.cat([labels, mem_y])
+                combined_x = torch.cat([samples, mem_x], dim=0)
+                combined_y = torch.cat([labels, mem_y], dim=0)
             else:
                 combined_x, combined_y = samples, labels
 
-            noAug = local_epoch < self.args.non_augment_epochs
-            batch_loss = self._perform_pcr_step(combined_x, combined_y, noAugment=noAug)
+            # Forward
+            features, outputs = self.model(combined_x, return_features=True)
+            cls_loss = F.cross_entropy(outputs, combined_y)
 
-            # print(f"local epoch {local_epoch}, loss: {batch_loss}")
+            # Contrastive part
+            cont_loss = self.weighted_contrastive_loss(features, combined_y)
 
-        self.train_task_loss += batch_loss
+            # Total loss
+            batch_loss = cls_loss + self.args.lambda_contrastive * cont_loss
 
+            # Backpropagation
+            self.optimizer.zero_grad()
+            batch_loss.backward()
+            self.optimizer.step()
+
+        self.train_task_loss += batch_loss.item()
+
+        # Update memory
         if self.args.update_strategy == 'reservoir':
             self.memory.reservoir_update(samples, labels, self.task_id)
         elif self.args.update_strategy == 'balanced':
