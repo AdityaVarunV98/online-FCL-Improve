@@ -327,7 +327,7 @@ class Client:
             elif self.args.sampling_strategy == "class_balanced":
                 mem_x, mem_y, _ = self.memory.class_group_sampling(self.args.batch_size, exclude_task=self.task_id)
             elif self.args.sampling_strategy == "class_group":
-                mem_x, mem_y, _ = self.memory.class_group_sampling(self.args.batch_size, exclude_task=self.task_id, r=self.args.r_class, class_balanced=False)
+                mem_x, mem_y, _ = self.memory.class_group_sampling(self.args.batch_size, exclude_task=self.task_id, debug_mode=False)
 
             if mem_x.size(0) > 0:
                 mem_x, mem_y = mem_x.to(self.args.device), mem_y.to(self.args.device)
