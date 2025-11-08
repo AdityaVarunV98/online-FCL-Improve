@@ -467,6 +467,65 @@ class Memory:
 
         x, y, t = mem_x[score_idx], mem_y[score_idx], mem_t[score_idx]
         return x, y, t
+    
+    def aser_sampling(self, model, mem_x=None, mem_y=None, mem_t=None,
+                    cur_x=None, cur_y=None,
+                    subsample_size=50, exclude_task=None, k_value=None, step_str=None, debug_mode=False):
+        """
+        Perform ASER-based sample selection from memory.
+        Similar to uncertainty_sampling(), but computes ASER scores
+        using Shapley Value differences between cooperative/adversarial samples.
+        """
+
+        # ====== 1. Prepare Subsample ======
+        if mem_x is None:
+            mem_x, mem_y, mem_t = self.random_sampling(subsample_size, exclude_task)
+        if k_value is None:
+            k_value = self.args.batch_size
+        if step_str is None:
+            step_str = self.args.step_str
+
+        # ====== 2. Compute ASER Scores ======
+        unc_scores, descending_flag = compute_aser_scores(
+            self.args, mem_x, mem_y, model, cur_x, cur_y
+        )
+
+        if debug_mode:
+            unique_classes, counts = torch.unique(mem_y, return_counts=True)
+            print("\n=== ASER Sampling Debug ===")
+            print(f"Memory samples: {len(mem_x)} | Classes: {len(unique_classes)}")
+            print(f"Samples per class: {dict(zip(unique_classes.tolist(), counts.tolist()))}")
+            print(f"Scores: shape={unc_scores.shape}, min={unc_scores.min():.3f}, max={unc_scores.max():.3f}, mean={unc_scores.mean():.3f}")
+            sorted_scores, sorted_idx = torch.sort(unc_scores, descending=descending_flag)
+            top_classes = mem_y[sorted_idx[:min(5, len(sorted_idx))]].tolist()
+            print(f"Top 5 scores: {sorted_scores[:5].tolist()}")
+            print(f"Classes of top samples: {top_classes}")
+            print("===================================")
+
+
+        # ====== 3. Select Samples Based on Score ======
+        if step_str == 'step':      # step-sized sampling
+            skip = mem_x.size(0) // k_value
+            steps = np.arange(0, mem_x.size(0), skip)
+            score_idx = torch.sort(unc_scores, descending=True)[1][steps]
+        elif step_str == 'topk':    # top-k sampling
+            score_idx = torch.sort(unc_scores, descending=descending_flag)[1][:k_value]
+        elif step_str == 'bottomk': # bottom-k sampling
+            descending_flag = not descending_flag
+            score_idx = torch.sort(unc_scores, descending=descending_flag)[1][:k_value]
+        else:
+            raise ValueError(f"Unknown step_str: {step_str}")
+        
+        if debug_mode:
+            selected_classes, selected_counts = torch.unique(mem_y[score_idx], return_counts=True)
+            print(f"[ASER] Selected {len(score_idx)} samples")
+            print(f"[ASER] Selected classes: {dict(zip(selected_classes.tolist(), selected_counts.tolist()))}")
+            print("===================================\n")
+
+        # ====== 4. Return selected samples ======
+        x, y, t = mem_x[score_idx], mem_y[score_idx], mem_t[score_idx]
+        return x, y, t
+
 
 
 def compute_uncertainty_scores(args, mem_x, model, augmentations, tta_rep=5, seen_cls=None):
@@ -589,6 +648,45 @@ def ratioSampling(zs, axis=0, class_axis=-1):
     secoundConfidence = top_candidates[:, 1]
     margin = secoundConfidence / firstConfidence
     return margin, True
+
+from utils.buffer.buffer_utils import ClassBalancedRandomSampling
+from utils.buffer.aser_utils import compute_knn_sv
+
+def compute_aser_scores(args, mem_x, mem_y, model, cur_x, cur_y):
+    """
+    Compute ASER (Adversarial Shapley Value Experience Replay) scores
+    using the cooperative/adversarial Shapley value difference approach.
+    """
+    device = args.device
+    k = getattr(args, "k_aser", 5)
+
+    # ====== Candidate Sampling (Use memory directly) ======
+    cand_x, cand_y = mem_x.to(device), mem_y.to(device)
+
+    # ====== Adversarial SVs ======
+    eval_adv_x, eval_adv_y = cur_x.to(device), cur_y.to(device)
+    sv_matrix_adv = compute_knn_sv(
+        model, eval_adv_x, eval_adv_y, cand_x, cand_y, k, device=device
+    )
+
+    # ====== Cooperative SVs ======
+    # Use the same memory as evaluation for cooperative SVs
+    eval_coop_x, eval_coop_y = mem_x.to(device), mem_y.to(device)
+    sv_matrix_coop = compute_knn_sv(
+        model, eval_coop_x, eval_coop_y, cand_x, cand_y, k, device=device
+    )
+
+    # ====== Final ASER Scores ======
+    if getattr(args, "aser_type", "asvm") == "asv":
+        sv = sv_matrix_coop.max(0).values - sv_matrix_adv.min(0).values
+    else:  # "asvm"
+        sv = sv_matrix_coop.mean(0) - sv_matrix_adv.mean(0)
+
+    unc_scores = sv.detach().cpu()
+    descending = True  # higher score = better sample
+
+    return unc_scores, descending
+
 
 
 class CutoutAfterToTensor(object):

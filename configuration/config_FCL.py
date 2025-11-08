@@ -126,7 +126,7 @@ def base_parser():
         "--sampling_strategy",
         type=str,
         default='random',
-        help="Memory sampling strategy [random, uncertainty, class_balanced, class_group]",
+        help="Memory sampling strategy [random, uncertainty, class_balanced, class_group, aser]",
     )
 
     parser.add_argument(
@@ -243,6 +243,41 @@ def base_parser():
         default=0.01,
         help="Parameter for proximal term in FedProx",
     )    
+
+        ####################### ASER PARAMETERS ###########################
+    parser.add_argument(
+        "--aser_type",
+        type=str,
+        default="asvm",
+        help="Type of ASER variant to use [asv, asvm, neg_sv]",
+    )
+
+    parser.add_argument(
+        "--k_aser",
+        type=int,
+        default=5,
+        help="Number of nearest neighbors (k) for KNN-based Shapley computation in ASER",
+    )
+
+    parser.add_argument(
+        "--n_smp_cls",
+        type=int,
+        default=5,
+        help="Number of candidate samples per class used for ASER candidate/evaluation sets",
+    )
+
+    parser.add_argument(
+        "--use_aser_update",
+        action="store_true",
+        help="Whether to use ASER for memory update instead of random/balanced update",
+    )
+
+    parser.add_argument(
+        "--use_aser_sampling",
+        action="store_true",
+        help="Whether to use ASER for memory sampling instead of uncertainty/random/class-balanced",
+    )
+
 
     args = parser.parse_args()
     return args

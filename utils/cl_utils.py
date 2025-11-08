@@ -328,6 +328,15 @@ class Client:
                 mem_x, mem_y, _ = self.memory.class_group_sampling(self.args.batch_size, exclude_task=self.task_id)
             elif self.args.sampling_strategy == "class_group":
                 mem_x, mem_y, _ = self.memory.class_group_sampling(self.args.batch_size, exclude_task=self.task_id, debug_mode=False)
+            elif self.args.sampling_strategy == "aser":
+                mem_x, mem_y, _ = self.memory.aser_sampling(
+                    model=self.model,
+                    cur_x=samples,
+                    cur_y=labels,
+                    exclude_task=self.task_id,
+                    step_str="topk",
+                    debug_mode=(self.client_id==4)
+                )
 
             if mem_x.size(0) > 0:
                 mem_x, mem_y = mem_x.to(self.args.device), mem_y.to(self.args.device)
