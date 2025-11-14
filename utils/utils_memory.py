@@ -487,7 +487,7 @@ class Memory:
 
         # ====== 2. Compute ASER Scores ======
         unc_scores, descending_flag = compute_aser_scores(
-            self.args, mem_x, mem_y, model, cur_x, cur_y
+            self.args, mem_x, mem_y, model, cur_x, cur_y, verbose=debug_mode
         )
 
         if debug_mode:
@@ -496,6 +496,14 @@ class Memory:
             print(f"Memory samples: {len(mem_x)} | Classes: {len(unique_classes)}")
             print(f"Samples per class: {dict(zip(unique_classes.tolist(), counts.tolist()))}")
             print(f"Scores: shape={unc_scores.shape}, min={unc_scores.min():.3f}, max={unc_scores.max():.3f}, mean={unc_scores.mean():.3f}")
+            
+             # -----------------------------------------
+            # Add your per-class score distribution here
+            # -----------------------------------------
+            for cls in unique_classes:
+                cls_idx = (mem_y == cls)
+                print(f"Class {cls}: count={cls_idx.sum()}, mean_score={unc_scores[cls_idx].mean().item():.3f}")
+            
             sorted_scores, sorted_idx = torch.sort(unc_scores, descending=descending_flag)
             top_classes = mem_y[sorted_idx[:min(5, len(sorted_idx))]].tolist()
             print(f"Top 5 scores: {sorted_scores[:5].tolist()}")
@@ -652,7 +660,7 @@ def ratioSampling(zs, axis=0, class_axis=-1):
 from utils.buffer.buffer_utils import ClassBalancedRandomSampling
 from utils.buffer.aser_utils import compute_knn_sv
 
-def compute_aser_scores(args, mem_x, mem_y, model, cur_x, cur_y):
+def compute_aser_scores(args, mem_x, mem_y, model, cur_x, cur_y, verbose=False):
     """
     Compute ASER (Adversarial Shapley Value Experience Replay) scores
     using the cooperative/adversarial Shapley value difference approach.
@@ -676,6 +684,13 @@ def compute_aser_scores(args, mem_x, mem_y, model, cur_x, cur_y):
         model, eval_coop_x, eval_coop_y, cand_x, cand_y, k, device=device
     )
 
+    if verbose:
+        coop = sv_matrix_coop.mean(0)
+        adv  = sv_matrix_adv.mean(0)
+
+        print("Coop SV mean/min/max:", coop.mean(), coop.min(), coop.max())
+        print("Adv  SV mean/min/max:", adv.mean(), adv.min(), adv.max())
+    
     # ====== Final ASER Scores ======
     if getattr(args, "aser_type", "asvm") == "asv":
         sv = sv_matrix_coop.max(0).values - sv_matrix_adv.min(0).values
