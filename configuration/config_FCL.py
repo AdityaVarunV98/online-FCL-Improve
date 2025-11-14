@@ -67,6 +67,13 @@ def base_parser():
     )
 
     parser.add_argument(
+        "--beta_wsc",
+        type=float,
+        default=0.99,
+        help="Weight parameter of the weighted supcon loss",
+    )
+
+    parser.add_argument(
         "--sup_type",
         type=str,
         default="proxy",

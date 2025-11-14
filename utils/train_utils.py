@@ -114,7 +114,7 @@ def initialize_model(args):
     from utils.supcon_loss import SupConLoss
     
     criterion_ce = torch.nn.CrossEntropyLoss()
-    criterion_supcon = SupConLoss(temperature=args.temp, contrast_mode=args.sup_type)
+    criterion_supcon = SupConLoss(temperature=args.temp, contrast_mode=args.sup_type, beta=args.beta_wsc)
     # print("Supcon loss temperature: ", args.temp)
 
     criteria = {'ce': criterion_ce, 'supcon': criterion_supcon}
