@@ -708,373 +708,81 @@ def get_loader_with_assignment(args, cls_assignment=None, run=None):
 
 
 
-# def assign_data_per_client(args, run):
-#     ds_dict = get_data_per_class(args)
-#     skip = args.n_classes_per_task
-
-#     # split datasets in non-overlapping parts
-#     split_list_x = {}
-#     split_list_y = {}
-#     # for each data split (i.e., train/val/test)
-#     for name_ds, ds in ds_dict.items():
-#         split_list_x[name_ds] = {}
-#         split_list_y[name_ds] = {}
-#         # for each class_id
-#         for class_id, class_ds in enumerate(ds):
-#             split_list_x[name_ds][class_id] = {}
-#             split_list_y[name_ds][class_id] = {}
-#             class_x, class_y = class_ds
-#             # split class data in non-overlapping parts of equal size
-#             split_len = int(len(class_x)/args.n_clients)
-#             split_x = torch.split(class_x, split_len)
-#             split_y = torch.split(class_y, split_len)
-#             # assign the non-overlapping parts to each client
-#             for client_id in range(args.n_clients):
-#                 split_list_x[name_ds][class_id][client_id] = split_x[client_id]
-#                 split_list_y[name_ds][class_id][client_id] = split_y[client_id]
-
-#     if args.dataset_name in medmnist.INFO.keys():
-#         ds_train = ds_dict['train']
-#         class_lengths = torch.Tensor([len(ds_class[1]) for ds_class in ds_train])
-#         print(class_lengths)
-#         sort, cls_assignment = class_lengths.sort(descending=True)
-#         cls_assignment = cls_assignment.tolist()
-#         cls_assignment_list = [cls_assignment for client in range(args.n_clients)]
-#     else:
-#         cls_assignment_list = []
-#         for client_id in range(args.n_clients):
-#             if args.overlap == 'non-overlap':
-#                 np.random.seed((run+1) * (client_id+1))
-#             else:
-#                 # seed change
-#                 np.random.seed(run)
-#             cls_assignment = np.arange(args.n_classes)
-#             np.random.shuffle(cls_assignment)
-#             cls_assignment_list.append(cls_assignment)
-
-#     # for each client id
-#     all_clients_ds = []
-#     for client_id in range(args.n_clients):
-#         client_ds = []
-#         class_ids = cls_assignment_list[client_id]
-#         # for each data split (i.e., train/val/test)
-#         for name_ds, ds in split_list_x.items():
-#             client_ds_tmp = []
-#             # assign non-overlapping split to each client task
-#             for i in range(0, args.n_classes, skip):
-#                 t_list = class_ids[i:i+skip]
-#                 task_ds_x_tmp = []
-#                 task_ds_y_tmp = []
-#                 for class_id in t_list:
-#                     task_ds_x_tmp.append(split_list_x[name_ds][class_id][client_id])
-#                     task_ds_y_tmp.append(split_list_y[name_ds][class_id][client_id])
-                
-#                 task_ds_x = torch.cat(task_ds_x_tmp)
-#                 task_ds_y = torch.cat(task_ds_y_tmp)
-#                 # shuffle samples in each task before saving
-#                 perm = torch.randperm(len(task_ds_x))
-#                 task_ds_x, task_ds_y = task_ds_x[perm], task_ds_y[perm]
-#                 client_ds_tmp += [(task_ds_x, task_ds_y)]
-#             client_ds.append(client_ds_tmp)
-#         all_clients_ds.append(client_ds)
-    
-#     return all_clients_ds, cls_assignment_list
-
-# def assign_data_per_client(args, run):
-#     ds_dict = get_data_per_class(args)
-#     skip = args.n_classes_per_task
-#     n_tasks = args.n_tasks
-
-#     # split datasets in non-overlapping parts (per client, per class)
-#     split_list_x, split_list_y = {}, {}
-
-#     class_proportions = {}
-#     alpha = getattr(args, "dirichlet_alpha", 0.5)
-#     for class_id in range(len(next(iter(ds_dict.values())))):  # assumes all splits have same num classes
-#         class_proportions[class_id] = np.random.dirichlet([alpha] * args.n_clients)
-
-#     for name_ds, ds in ds_dict.items():
-#         split_list_x[name_ds] = {}
-#         split_list_y[name_ds] = {}
-#         for class_id, class_ds in enumerate(ds):
-#             split_list_x[name_ds][class_id] = {}
-#             split_list_y[name_ds][class_id] = {}
-#             class_x, class_y = class_ds
-#             n_total = len(class_x)
-
-#             # if name_ds.lower() == "test" or name_ds.lower() == "val":
-#             #     base_size = n_total // args.n_clients
-#             #     sizes = [base_size] * args.n_clients
-#             #     sizes[-1] += n_total - sum(sizes)
-#             # else:
-#             #     # Heterogeneous split across clients using Dirichlet allocation
-#             #     alpha = getattr(args, "dirichlet_alpha", 0.5)  # e.g., 0.5 for more heterogeneity
-#             #     proportions = np.random.dirichlet([alpha] * args.n_clients)
-#             #     sizes = (proportions * n_total).astype(int)
-
-#             #     # Fix rounding issues
-#             #     if sizes.sum() < n_total:
-#             #         sizes[-1] += n_total - sizes.sum()
-
-#             proportions = class_proportions[class_id]
-#             sizes = (proportions * n_total).astype(int)
-#             if sizes.sum() < n_total:
-#                 sizes[-1] += n_total - sizes.sum()
-
-#             start_idx = 0
-#             for client_id, size in enumerate(sizes):
-#                 end_idx = start_idx + size
-#                 split_list_x[name_ds][class_id][client_id] = class_x[start_idx:end_idx]
-#                 split_list_y[name_ds][class_id][client_id] = class_y[start_idx:end_idx]
-#                 start_idx = end_idx
-
-
-#     # --- Define class assignments per client ---
-#     cls_assignment_list = []
-
-#     if args.overlap == 'overlap' and not getattr(args, "client_specific_tasks", False):
-#         # Shared class ordering across all clients
-#         np.random.seed(run)
-#         global_class_order = np.arange(args.n_classes)
-#         np.random.shuffle(global_class_order)
-#         for _ in range(args.n_clients):
-#             cls_assignment_list.append(global_class_order)
-#     else:
-#         # Each client gets its own randomized order
-#         for client_id in range(args.n_clients):
-#             np.random.seed(run + client_id)
-#             cls_assignment = np.arange(args.n_classes)
-#             np.random.shuffle(cls_assignment)
-#             cls_assignment_list.append(cls_assignment)
-
-
-#     # --- Assign data per client ---
-#     all_clients_ds = []
-
-#     for client_id in range(args.n_clients):
-#         client_ds = []
-#         class_ids = cls_assignment_list[client_id]
-#         n_classes = len(class_ids)
-
-#         # Build per-task class mapping (can differ across clients)
-#         if getattr(args, "client_specific_tasks", True):
-#             # Each client independently decides which classes appear in each task
-#             client_task_classes = []
-#             for t in range(n_tasks):
-#                 chosen = np.random.choice(class_ids, size=skip, replace=False)
-#                 client_task_classes.append(chosen)
-#         else:
-#             # Shared global mapping as before
-#             client_task_classes = [class_ids[i:i + skip] for i in range(0, n_classes, skip)]
-
-#         # --- Assign data for train/val/test ---
-#         for name_ds, ds in split_list_x.items():
-#             client_ds_tmp = []
-
-#             # Each task gets data from its assigned classes
-#             for t_id, t_list in enumerate(client_task_classes):
-#                 task_ds_x_tmp, task_ds_y_tmp = [], []
-
-#                 for class_id in t_list:
-#                     class_x = split_list_x[name_ds][class_id][client_id]
-#                     class_y = split_list_y[name_ds][class_id][client_id]
-
-#                     # If class overlap is enabled, distribute class_x across tasks
-#                     if getattr(args, "class_overlap", False):
-#                         alpha = getattr(args, "class_overlap_alpha", [1.0] * n_tasks)
-#                         proportions = np.random.dirichlet(alpha)
-#                         n_total = len(class_x)
-#                         sizes = (proportions * n_total).astype(int)
-#                         # Handle rounding edge case
-#                         if sizes.sum() < n_total:
-#                             sizes[-1] += n_total - sizes.sum()
-
-#                         # Assign subset to the current task
-#                         start = sum(sizes[:t_id])
-#                         end = start + sizes[t_id]
-#                         if start < len(class_x):
-#                             class_x = class_x[start:end]
-#                             class_y = class_y[start:end]
-#                         else:
-#                             class_x, class_y = torch.tensor([]), torch.tensor([])
-
-#                     task_ds_x_tmp.append(class_x)
-#                     task_ds_y_tmp.append(class_y)
-
-#                 if len(task_ds_x_tmp) > 0:
-#                     task_ds_x = torch.cat(task_ds_x_tmp)
-#                     task_ds_y = torch.cat(task_ds_y_tmp)
-#                     perm = torch.randperm(len(task_ds_x))
-#                     task_ds_x, task_ds_y = task_ds_x[perm], task_ds_y[perm]
-#                     client_ds_tmp.append((task_ds_x, task_ds_y))
-
-#             client_ds.append(client_ds_tmp)
-
-#         all_clients_ds.append(client_ds)
-
-#     return all_clients_ds, cls_assignment_list
-
 def assign_data_per_client(args, run):
     ds_dict = get_data_per_class(args)
     skip = args.n_classes_per_task
-    n_tasks = args.n_tasks
 
-    # --- Initialize ---
-    split_list_x, split_list_y = {}, {}
+    # split datasets in non-overlapping parts
+    split_list_x = {}
+    split_list_y = {}
+    # for each data split (i.e., train/val/test)
+    for name_ds, ds in ds_dict.items():
+        split_list_x[name_ds] = {}
+        split_list_y[name_ds] = {}
+        # for each class_id
+        for class_id, class_ds in enumerate(ds):
+            split_list_x[name_ds][class_id] = {}
+            split_list_y[name_ds][class_id] = {}
+            class_x, class_y = class_ds
+            # split class data in non-overlapping parts of equal size
+            split_len = int(len(class_x)/args.n_clients)
+            split_x = torch.split(class_x, split_len)
+            split_y = torch.split(class_y, split_len)
+            # assign the non-overlapping parts to each client
+            for client_id in range(args.n_clients):
+                split_list_x[name_ds][class_id][client_id] = split_x[client_id]
+                split_list_y[name_ds][class_id][client_id] = split_y[client_id]
 
-    # --- Pre-sample Dirichlet proportions per class ---
-    class_proportions = {}
-    alpha = getattr(args, "dirichlet_alpha", 0.5)
-    for class_id in range(len(next(iter(ds_dict.values())))):  # assumes all splits have same num classes
-        class_proportions[class_id] = np.random.dirichlet([alpha] * args.n_clients)
-
-    # --- Define train/val/test ratio ---
-    # split_ratios = getattr(args, "split_ratios", [0.7, 0.1, 0.2])  # default 7:1:2
-    split_ratios = [0.7, 0.1, 0.2]
-    split_names = ["train", "val", "test"]
-
-    # --- Merge and split ---
-    for class_id in range(len(next(iter(ds_dict.values())))):
-        # Merge across train/val/test for this class
-        merged_x_list, merged_y_list = [], []
-        for name_ds, ds in ds_dict.items():
-            class_x, class_y = ds[class_id]
-            merged_x_list.append(class_x)
-            merged_y_list.append(class_y)
-        merged_x = torch.cat(merged_x_list)
-        merged_y = torch.cat(merged_y_list)
-        n_total = len(merged_x)
-
-        # Shuffle once globally per class
-        perm = torch.randperm(n_total)
-        merged_x, merged_y = merged_x[perm], merged_y[perm]
-
-        # --- Split across clients (Dirichlet per class) ---
-        proportions = class_proportions[class_id]
-        sizes = (proportions * n_total).astype(int)
-        if sizes.sum() < n_total:
-            sizes[-1] += n_total - sizes.sum()
-
-        start_idx = 0
-        for client_id, size in enumerate(sizes):
-            end_idx = start_idx + size
-            client_x = merged_x[start_idx:end_idx]
-            client_y = merged_y[start_idx:end_idx]
-            start_idx = end_idx
-
-            # --- Split this client's portion into train/val/test by ratio ---
-            n_client_total = len(client_x)
-            n_train = int(split_ratios[0] * n_client_total)
-            n_val = int(split_ratios[1] * n_client_total)
-            n_test = n_client_total - n_train - n_val
-
-            split_indices = [
-                (0, n_train),
-                (n_train, n_train + n_val),
-                (n_train + n_val, n_client_total),
-            ]
-
-            for name_ds, (s, e) in zip(split_names, split_indices):
-                if name_ds not in split_list_x:
-                    split_list_x[name_ds] = {}
-                    split_list_y[name_ds] = {}
-                if class_id not in split_list_x[name_ds]:
-                    split_list_x[name_ds][class_id] = {}
-                    split_list_y[name_ds][class_id] = {}
-
-                split_list_x[name_ds][class_id][client_id] = client_x[s:e]
-                split_list_y[name_ds][class_id][client_id] = client_y[s:e]
-
-
-    # --- Define class assignments per client ---
-    cls_assignment_list = []
-
-    if args.overlap == 'overlap' and not getattr(args, "client_specific_tasks", False):
-        # Shared class ordering across all clients
-        np.random.seed(run)
-        global_class_order = np.arange(args.n_classes)
-        np.random.shuffle(global_class_order)
-        for _ in range(args.n_clients):
-            cls_assignment_list.append(global_class_order)
+    if args.dataset_name in medmnist.INFO.keys():
+        ds_train = ds_dict['train']
+        class_lengths = torch.Tensor([len(ds_class[1]) for ds_class in ds_train])
+        print(class_lengths)
+        sort, cls_assignment = class_lengths.sort(descending=True)
+        cls_assignment = cls_assignment.tolist()
+        cls_assignment_list = [cls_assignment for client in range(args.n_clients)]
     else:
-        # Each client gets its own randomized order
+        cls_assignment_list = []
         for client_id in range(args.n_clients):
-            np.random.seed(run + client_id)
+            if args.overlap == 'non-overlap':
+                np.random.seed((run+1) * (client_id+1))
+            else:
+                # seed change
+                np.random.seed(run)
             cls_assignment = np.arange(args.n_classes)
             np.random.shuffle(cls_assignment)
             cls_assignment_list.append(cls_assignment)
 
-
-    # --- Assign data per client ---
+    # for each client id
     all_clients_ds = []
-
     for client_id in range(args.n_clients):
         client_ds = []
         class_ids = cls_assignment_list[client_id]
-        n_classes = len(class_ids)
-
-        # Build per-task class mapping (can differ across clients)
-        if getattr(args, "client_specific_tasks", True):
-            # Each client independently decides which classes appear in each task
-            client_task_classes = []
-            for t in range(n_tasks):
-                chosen = np.random.choice(class_ids, size=skip, replace=False)
-                client_task_classes.append(chosen)
-        else:
-            # Shared global mapping as before
-            client_task_classes = [class_ids[i:i + skip] for i in range(0, n_classes, skip)]
-
-        # --- Assign data for train/val/test ---
+        # for each data split (i.e., train/val/test)
         for name_ds, ds in split_list_x.items():
             client_ds_tmp = []
-
-            # Each task gets data from its assigned classes
-            for t_id, t_list in enumerate(client_task_classes):
-                task_ds_x_tmp, task_ds_y_tmp = [], []
-
+            # assign non-overlapping split to each client task
+            for i in range(0, args.n_classes, skip):
+                t_list = class_ids[i:i+skip]
+                task_ds_x_tmp = []
+                task_ds_y_tmp = []
                 for class_id in t_list:
-                    class_x = split_list_x[name_ds][class_id][client_id]
-                    class_y = split_list_y[name_ds][class_id][client_id]
-
-                    # If class overlap is enabled, distribute class_x across tasks
-                    if getattr(args, "class_overlap", False):
-                        alpha = getattr(args, "class_overlap_alpha", [1.0] * n_tasks)
-                        proportions = np.random.dirichlet(alpha)
-                        n_total = len(class_x)
-                        sizes = (proportions * n_total).astype(int)
-                        # Handle rounding edge case
-                        if sizes.sum() < n_total:
-                            sizes[-1] += n_total - sizes.sum()
-
-                        # Assign subset to the current task
-                        start = sum(sizes[:t_id])
-                        end = start + sizes[t_id]
-                        if start < len(class_x):
-                            class_x = class_x[start:end]
-                            class_y = class_y[start:end]
-                        else:
-                            class_x, class_y = torch.tensor([]), torch.tensor([])
-
-                    task_ds_x_tmp.append(class_x)
-                    task_ds_y_tmp.append(class_y)
-
-                if len(task_ds_x_tmp) > 0:
-                    task_ds_x = torch.cat(task_ds_x_tmp)
-                    task_ds_y = torch.cat(task_ds_y_tmp)
-                    perm = torch.randperm(len(task_ds_x))
-                    task_ds_x, task_ds_y = task_ds_x[perm], task_ds_y[perm]
-                    client_ds_tmp.append((task_ds_x, task_ds_y))
-
+                    task_ds_x_tmp.append(split_list_x[name_ds][class_id][client_id])
+                    task_ds_y_tmp.append(split_list_y[name_ds][class_id][client_id])
+                
+                task_ds_x = torch.cat(task_ds_x_tmp)
+                task_ds_y = torch.cat(task_ds_y_tmp)
+                # shuffle samples in each task before saving
+                perm = torch.randperm(len(task_ds_x))
+                task_ds_x, task_ds_y = task_ds_x[perm], task_ds_y[perm]
+                client_ds_tmp += [(task_ds_x, task_ds_y)]
             client_ds.append(client_ds_tmp)
-
         all_clients_ds.append(client_ds)
-
+    
     return all_clients_ds, cls_assignment_list
 
 
-
 def get_loader_all_clients(args, run):
-    dir_output = f'{args.dir_data}/data_splits/{args.framework}/{args.dataset_name}/{args.overlap}/{args.n_clients}clients/{args.n_tasks}tasks/{args.dirichlet_alpha}diri/run{run}/'
+    dir_output = f'{args.dir_data}/data_splits/{args.framework}/{args.dataset_name}/{args.overlap}/{args.n_clients}clients/{args.n_tasks}tasks/run{run}/'
     loader_fn = f'{dir_output}{args.dataset_name}_split.pkl'
     cls_assignment_fn = f'{dir_output}{args.dataset_name}_cls_assignment.pkl'
     global_test_fn = f'{dir_output}{args.dataset_name}_global_test.pkl'

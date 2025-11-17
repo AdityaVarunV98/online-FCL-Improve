@@ -671,11 +671,11 @@ def compute_aser_scores(args, mem_x, mem_y, model, cur_x, cur_y, verbose=False):
     # ====== Candidate Sampling (Use memory directly) ======
     cand_x, cand_y = mem_x.to(device), mem_y.to(device)
 
-    # ====== Adversarial SVs ======
-    eval_adv_x, eval_adv_y = cur_x.to(device), cur_y.to(device)
-    sv_matrix_adv = compute_knn_sv(
-        model, eval_adv_x, eval_adv_y, cand_x, cand_y, k, device=device
-    )
+    # # ====== Adversarial SVs ======
+    # eval_adv_x, eval_adv_y = cur_x.to(device), cur_y.to(device)
+    # sv_matrix_adv = compute_knn_sv(
+    #     model, eval_adv_x, eval_adv_y, cand_x, cand_y, k, device=device
+    # )
 
     # ====== Cooperative SVs ======
     # Use the same memory as evaluation for cooperative SVs
@@ -686,16 +686,15 @@ def compute_aser_scores(args, mem_x, mem_y, model, cur_x, cur_y, verbose=False):
 
     if verbose:
         coop = sv_matrix_coop.mean(0)
-        adv  = sv_matrix_adv.mean(0)
-
         print("Coop SV mean/min/max:", coop.mean(), coop.min(), coop.max())
-        print("Adv  SV mean/min/max:", adv.mean(), adv.min(), adv.max())
     
     # ====== Final ASER Scores ======
     if getattr(args, "aser_type", "asvm") == "asv":
-        sv = sv_matrix_coop.max(0).values - sv_matrix_adv.min(0).values
+        sv = sv_matrix_coop.max(0).values
+        # sv = sv_matrix_coop.max(0).values - sv_matrix_adv.min(0).values
     else:  # "asvm"
-        sv = sv_matrix_coop.mean(0) - sv_matrix_adv.mean(0)
+        sv = sv_matrix_coop.mean(0)
+        # sv = sv_matrix_coop.mean(0) - sv_matrix_adv.mean(0)
 
     unc_scores = sv.detach().cpu()
     descending = True  # higher score = better sample
