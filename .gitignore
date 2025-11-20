@@ -8,6 +8,7 @@ data_archive/
 
 # Generated output and results
 output/
+results/
 
 # Log files
 experiments_log.txt
