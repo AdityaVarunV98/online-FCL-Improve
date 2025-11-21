@@ -53,7 +53,7 @@ for run in range(args.n_runs):
                         client.task_id += 1
 
         # COMMUNICATION ROUND PART
-        selected_clients = [client.client_id for client in clients if (client.num_batches >= args.burnin and client.num_batches % args.jump == 0 and client.train_completed == False)]
+        selected_clients = [client.client_id for client in clients if (client.num_batches >= args.burnin and client.batches_total % args.jump == 0 and client.train_completed == False)]
         if len(selected_clients) > 1:
             # communication round when all clients process a mini-batch
             if args.fl_update.startswith('w_'):
